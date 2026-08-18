@@ -431,7 +431,7 @@
         <!-- (3) 本月作業主題 -->
         <div class="month-banner">
           <div>
-            <p class="section-label" style="margin-top:0;">本月作業主題 · 第 <span id="cycle-num">1</span> 期</p>
+            <p class="section-label" style="margin-top:0;">本月作業主題 <span id="current-month-label" style="color:var(--text-dim);font-weight:400;"></span></p>
             <p id="current-month-topic" style="font-size:19px;font-weight:700;margin:0;"></p>
           </div>
           <button class="mini-btn" id="admin-toggle-btn" style="display:none;">🔒 管理員模式</button>
@@ -457,12 +457,8 @@
             <button class="primary" id="homework-add">回報</button>
           </div>
           <div style="display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap;align-items:center;">
-            <input id="homework-link-input" type="text" placeholder="連結（選填，網址）" style="flex:1;min-width:180px;">
-            <label class="file-btn" for="homework-file-input">📎 附加檔案</label>
-            <input id="homework-file-input" type="file" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.zip" style="display:none;">
-            <span id="homework-file-name" style="font-size:12px;color:var(--text-dim);"></span>
+            <input id="homework-link-input" type="text" placeholder="連結（選填，網址，例如作品連結或截圖雲端連結）" style="flex:1;min-width:180px;">
           </div>
-          <div id="homework-file-preview"></div>
           <p class="err-msg" id="homework-err">請先輸入名字與內容</p>
         </div>
 
@@ -476,18 +472,14 @@
       <!-- CASE -->
       <div id="panel-case" class="panel" style="display:none;">
         <p class="panel-title">◈ 實戰案例徵集</p>
-        <p class="panel-desc">分享一則你用 AI 工具解決問題的實戰案例，可附上網址或截圖。</p>
+        <p class="panel-desc">分享一則你用 AI 工具解決問題的實戰案例，可附上參考連結。</p>
         <div class="compose">
           <input id="case-input" type="text" placeholder="分享一則實戰案例（工具、場景、成效）">
           <button class="primary" id="case-add">分享</button>
         </div>
         <div style="display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap;align-items:center;">
-          <input id="case-link-input" type="text" placeholder="參考連結（選填，網址）" style="flex:1;min-width:180px;">
-          <label class="file-btn" for="case-file-input">📎 附加圖片或檔案</label>
-          <input id="case-file-input" type="file" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.zip" style="display:none;">
-          <span id="case-file-name" style="font-size:12px;color:var(--text-dim);"></span>
+          <input id="case-link-input" type="text" placeholder="參考連結（選填，網址，例如截圖雲端連結）" style="flex:1;min-width:180px;">
         </div>
-        <div id="case-file-preview"></div>
         <p class="err-msg" id="case-err">請先輸入名字與內容</p>
         <div id="case-list"></div>
       </div>
@@ -564,32 +556,92 @@
 
 <script>
 (function(){
-  var STORE_KEY = 'ai_club_data_v1';
+  /* ---------- API ---------- */
+  var API_URL = 'https://script.google.com/macros/s/AKfycbwL2ls0Snp4qujzWC7tZcghUOvvAHkge-6vVEebcchwfPWihP28desA8VVsP-iMjP_l/exec';
+  var SESSION_KEY = 'ai_club_session_v1';
+  var currentUser = null;
+  var registeredMembers = [];
+  var data = { wishes: [], topicProposals: [], topics: [], currentTopic: null, homeworks: [], cases: [], showcase: [], stamps: [] };
 
-  function loadData(){
-    var d = { wishes: [], themes: [], homeworks: [], cases: [], showcase: [], stamps: {}, feed: [], currentMonth: { cycle: 1, topic: '', setAt: Date.now() } };
+  async function apiPost(action, payload){
+    var body = Object.assign({ action: action }, payload || {});
+    var res = await fetch(API_URL, { method: 'POST', body: JSON.stringify(body) });
+    var json = await res.json();
+    if(json.error) throw new Error(json.error);
+    return json.data;
+  }
+  async function apiGet(action, params){
+    var qs = new URLSearchParams(Object.assign({ action: action }, params || {})).toString();
+    var res = await fetch(API_URL + '?' + qs);
+    var json = await res.json();
+    if(json.error) throw new Error(json.error);
+    return json;
+  }
+
+  function loadSession(){
+    try{ var raw = localStorage.getItem(SESSION_KEY); return raw ? JSON.parse(raw) : null; }catch(e){ return null; }
+  }
+  function saveSession(user){ try{ localStorage.setItem(SESSION_KEY, JSON.stringify(user)); }catch(e){} }
+  function clearSession(){ try{ localStorage.removeItem(SESSION_KEY); }catch(e){} }
+
+  /* ---------- 小工具 ---------- */
+  function esc(s){ var d = document.createElement('div'); d.textContent = s == null ? '' : s; return d.innerHTML; }
+  function parseTs(str){
+    if(!str) return 0;
+    if(typeof str === 'number') return str;
+    var t = new Date(String(str).replace(' ', 'T')).getTime();
+    return isNaN(t) ? 0 : t;
+  }
+  function fmtTime(str){
+    var t = parseTs(str);
+    if(!t) return '';
+    var d = new Date(t);
+    return (d.getMonth()+1)+'/'+d.getDate()+' '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');
+  }
+  function pad2(n){ return String(n).padStart(2,'0'); }
+  function monthStr(d){ return d.getFullYear()+'-'+pad2(d.getMonth()+1)+'-01'; }
+  function thisMonthStr(){ return monthStr(new Date()); }
+  function nextMonthStr(){ var d = new Date(); d.setMonth(d.getMonth()+1); return monthStr(d); }
+
+  function getName(){ return currentUser ? currentUser.displayName : null; }
+  function stampsFor(name){
+    var row = data.stamps.find(function(s){ return s.displayName === name; });
+    return row ? (Number(row.totalStamps) || 0) : 0;
+  }
+
+  /* ---------- 資料刷新 ---------- */
+  async function refreshData(){
     try{
-      var raw = localStorage.getItem(STORE_KEY);
-      if(raw){
-        var parsed = JSON.parse(raw);
-        d = Object.assign(d, parsed);
-        if(!d.showcase) d.showcase = [];
-        if(!d.currentMonth) d.currentMonth = { cycle: 1, topic: '', setAt: Date.now() };
-        d.wishes.forEach(function(w){
-          if(typeof w.claimedBy === 'string'){ w.claimedBy = w.claimedBy ? [w.claimedBy] : []; }
-          if(!w.claimedBy) w.claimedBy = [];
-          if(!w.completedBy) w.completedBy = [];
-        });
-        d.homeworks.forEach(function(h){ if(h.cycle === undefined) h.cycle = 0; });
-      }
-    }catch(e){}
-    return d;
+      var all = await apiGet('getAll');
+      data.wishes = all.wishes || [];
+      data.topicProposals = all.topicProposals || [];
+      data.topics = all.topics || [];
+      data.currentTopic = all.currentTopic || null;
+      data.homeworks = all.homeworks || [];
+      data.cases = all.cases || [];
+      data.showcase = all.showcase || [];
+      data.stamps = all.stamps || [];
+      registeredMembers = all.users || [];
+      renderAll();
+    }catch(e){
+      console.error('讀取資料失敗', e);
+    }
   }
-  function saveData(d){
-    try{ localStorage.setItem(STORE_KEY, JSON.stringify(d)); }catch(e){}
-  }
-  var data = loadData();
 
+  function renderAll(){
+    renderWishes();
+    renderThemes();
+    renderHomeworks();
+    renderCases();
+    renderShowcase();
+    renderMyOps();
+    renderBoard();
+    renderMembers();
+    renderFeed();
+    renderMonthBanner();
+  }
+
+  /* ---------- Tabs ---------- */
   var tabs = document.querySelectorAll('.tab-btn');
   var panels = {
     wish: document.getElementById('panel-wish'),
@@ -617,206 +669,191 @@
     };
   });
 
-  function esc(s){ var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
-  function fmtTime(ts){
-    var d = new Date(ts);
-    return (d.getMonth()+1)+'/'+d.getDate()+' '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');
-  }
-  function uid(){ return Date.now().toString(36) + Math.random().toString(36).slice(2,6); }
-
-  function getName(){
-    return currentUser ? currentUser.displayName : null;
-  }
-
-  function addStamp(name){
-    data.stamps[name] = (data.stamps[name]||0) + 1;
-  }
-
-  function pushFeed(type, icon, tone, text){
-    if(!data.feed) data.feed = [];
-    data.feed.unshift({ id: uid(), type: type, icon: icon, tone: tone, text: text, ts: Date.now() });
-    data.feed = data.feed.slice(0, 40);
-  }
-
-  function renderFeed(){
-    var box = document.getElementById('feed');
-    var arr = data.feed || [];
-    if(arr.length === 0){ box.innerHTML = '<p class="empty">還沒有動態，快來發布第一則投稿。</p>'; return; }
-    box.innerHTML = arr.map(function(f){
-      return '<div class="feed-item"><div class="feed-icon">'+f.icon+'</div><div><div class="feed-text">'+f.text+'</div><div class="feed-time">'+fmtTime(f.ts)+'</div></div></div>';
-    }).join('');
-  }
-
+  /* ---------- 主題許願樓 ---------- */
   function renderWishes(){
     var box = document.getElementById('wish-list');
     var arr = data.wishes;
-    var currentName = currentUser ? currentUser.displayName : '';
+    var myUid = currentUser ? currentUser.userId : '';
     if(arr.length === 0){ box.innerHTML = '<p class="empty">目前還沒有人許願，第一個許願吧。</p>'; return; }
     box.innerHTML = arr.slice().reverse().map(function(w){
-      var claimCount = w.claimedBy.length;
-      var doneCount = w.completedBy.length;
+      var claims = w.claims || [];
+      var doneCount = claims.filter(function(c){ return c.completed; }).length;
+      var claimCount = claims.length;
       var tone = doneCount > 0 ? 'tone-amber' : (claimCount > 0 ? 'tone-cyan' : '');
       var pill = doneCount > 0
         ? '<span class="status-pill status-done">已有 '+doneCount+' 人完成</span>'
         : (claimCount > 0 ? '<span class="status-pill status-claimed">'+claimCount+' 人認領中</span>' : '<span class="status-pill status-open">待認領</span>');
-      var iClaimed = currentName && w.claimedBy.indexOf(currentName) !== -1;
-      var iCompleted = currentName && w.completedBy.indexOf(currentName) !== -1;
-      var actions = '';
-      if(!iClaimed) actions += '<button class="mini-btn" data-act="claim" data-id="'+w.id+'">認領</button>';
+      var mine = claims.find(function(c){ return c.userId === myUid; });
+      var iClaimed = !!mine;
+      var iCompleted = mine && mine.completed;
+      var actions = !iClaimed ? '<button class="mini-btn" data-act="claim" data-id="'+w.wishId+'">認領</button>' : '';
       var claimerTags = claimCount > 0
-        ? '<div class="claimer-tags">'+w.claimedBy.map(function(n){ return '<span class="claimer-tag">'+esc(n)+(w.completedBy.indexOf(n)!==-1?' ✓':'')+'</span>'; }).join('')+'</div>'
+        ? '<div class="claimer-tags">'+claims.map(function(c){ return '<span class="claimer-tag">'+esc(c.displayName)+(c.completed?' ✓':'')+'</span>'; }).join('')+'</div>'
         : '';
       var feedbackBox = (iClaimed && !iCompleted)
-        ? '<div class="feedback-box" data-wish="'+w.id+'">'
+        ? '<div class="feedback-box" data-wish="'+w.wishId+'">'
           + '<p class="feedback-hint">交作業區：寫下你怎麼分享這個許願，送出後會自動同步到作品展示區</p>'
           + '<input type="text" class="fb-content" placeholder="回饋內容（怎麼分享的、學到什麼）">'
           + '<div style="display:flex;gap:8px;margin-top:8px;">'
           + '<input type="text" class="fb-link" placeholder="連結（選填）" style="flex:1;">'
-          + '<button class="mini-btn primary-mini" data-act="submit-feedback" data-id="'+w.id+'">繳交回饋並完成</button>'
+          + '<button class="mini-btn primary-mini" data-act="submit-feedback" data-id="'+w.wishId+'">繳交回饋並完成</button>'
           + '</div><p class="err-msg fb-err">請先輸入回饋內容</p>'
           + '</div>'
         : '';
-      return '<div class="quest-card '+tone+'"><div class="quest-body">'+esc(w.content)+'</div><div class="quest-meta"><span class="author">'+esc(w.author)+' 許願</span><span>'+fmtTime(w.createdAt)+'</span>'+pill+actions+'</div>'+claimerTags+feedbackBox+'</div>';
+      return '<div class="quest-card '+tone+'"><div class="quest-body">'+esc(w.topic)+'</div><div class="quest-meta"><span class="author">'+esc(w.displayName)+' 許願</span><span>'+fmtTime(w.timestamp)+'</span>'+pill+actions+'</div>'+claimerTags+feedbackBox+'</div>';
     }).join('');
+
     box.querySelectorAll('[data-act="claim"]').forEach(function(btn){
-      btn.onclick = function(){
-        var name = getName();
-        if(!name) return;
-        var w = data.wishes.find(function(x){ return x.id === btn.dataset.id; });
-        if(!w) return;
-        if(w.claimedBy.indexOf(name) === -1) w.claimedBy.push(name);
-        pushFeed('claim','▶','tone-cyan','<b>'+esc(name)+'</b> 認領了許願「'+esc(w.content)+'」');
-        saveData(data);
-        renderAll();
+      btn.onclick = async function(){
+        if(!currentUser) return;
+        btn.disabled = true;
+        try{
+          await apiPost('claimWish', { wishId: btn.dataset.id, userId: currentUser.userId, displayName: currentUser.displayName });
+          await refreshData();
+        }catch(e){ alert(e.message); btn.disabled = false; }
       };
     });
     box.querySelectorAll('[data-act="submit-feedback"]').forEach(function(btn){
-      btn.onclick = function(){
-        var name = getName();
-        if(!name) return;
+      btn.onclick = async function(){
+        if(!currentUser) return;
         var box2 = btn.closest('.feedback-box');
         var content = box2.querySelector('.fb-content').value.trim();
         var link = box2.querySelector('.fb-link').value.trim();
         var err = box2.querySelector('.fb-err');
         if(!content){ err.style.display = 'block'; return; }
         err.style.display = 'none';
-        var w = data.wishes.find(function(x){ return x.id === btn.dataset.id; });
-        if(!w) return;
-        if(w.completedBy.indexOf(name) === -1){
-          w.completedBy.push(name);
-          addStamp(name);
-          data.showcase.push({ id: uid(), title: '回饋：'+w.content, desc: content, link: link, author: name, createdAt: Date.now(), tag: 'feedback', sourceWish: w.content, groupLabel: w.content });
-          pushFeed('complete','✓','tone-amber','<b>'+esc(name)+'</b> 繳交回饋完成許願「'+esc(w.content)+'」，已同步到作品展示區 +1 印章');
-        }
-        saveData(data);
-        renderAll();
+        btn.disabled = true;
+        try{
+          await apiPost('completeWish', { wishId: btn.dataset.id, userId: currentUser.userId, displayName: currentUser.displayName, feedback: content, link: link });
+          await refreshData();
+        }catch(e){ alert(e.message); btn.disabled = false; }
       };
     });
   }
 
+  /* ---------- 每月作業 ---------- */
   function renderThemes(){
     var box = document.getElementById('theme-list');
-    var arr = data.themes;
+    var arr = data.topicProposals;
     if(arr.length === 0){ box.innerHTML = '<p class="empty">還沒有主題候選。</p>'; return; }
     box.innerHTML = arr.slice().reverse().map(function(t){
-      return '<div class="quest-card tone-cyan"><div class="quest-body">'+esc(t.content)+'</div><div class="quest-meta"><span class="author">'+esc(t.author)+'</span><span>'+fmtTime(t.createdAt)+'</span></div></div>';
+      return '<div class="quest-card tone-cyan"><div class="quest-body">'+esc(t.proposedTopic)+'</div><div class="quest-meta"><span class="author">'+esc(t.displayName)+'</span><span>'+fmtTime(t.timestamp)+'</span></div></div>';
     }).join('');
   }
 
   function renderHomeworks(){
     var box = document.getElementById('homework-list');
-    var arr = data.homeworks.filter(function(h){ return h.cycle === data.currentMonth.cycle; });
+    var currentMonth = data.currentTopic ? data.currentTopic.month : null;
+    var arr = data.homeworks.filter(function(h){ return currentMonth ? h.month === currentMonth : true; });
     if(arr.length === 0){ box.innerHTML = '<p class="empty">本期還沒有人回報作業。</p>'; return; }
     box.innerHTML = arr.slice().reverse().map(function(h){
-      var extra = '';
-      if(h.fileUrl && h.isImage) extra += '<img class="attach-preview" src="'+h.fileUrl+'">';
-      else if(h.fileUrl) extra += '<div><a class="attach-link" href="'+h.fileUrl+'" download="'+esc(h.fileName||'')+'">📄 '+esc(h.fileName||'附加檔案')+'</a></div>';
-      if(h.link) extra += '<div><a class="attach-link" href="'+esc(h.link)+'" target="_blank" rel="noopener">'+esc(h.link)+'</a></div>';
-      return '<div class="quest-card tone-amber"><div class="quest-body">'+esc(h.content)+'</div>'+extra+'<div class="quest-meta"><span class="author">'+esc(h.author)+'</span><span>'+fmtTime(h.createdAt)+'</span></div></div>';
+      var extra = h.link ? '<div><a class="attach-link" href="'+esc(h.link)+'" target="_blank" rel="noopener">'+esc(h.link)+'</a></div>' : '';
+      return '<div class="quest-card tone-amber"><div class="quest-body">'+esc(h.content)+'</div>'+extra+'<div class="quest-meta"><span class="author">'+esc(h.displayName)+'</span><span>'+fmtTime(h.timestamp)+'</span></div></div>';
     }).join('');
   }
 
   function renderMonthBanner(){
-    document.getElementById('cycle-num').textContent = data.currentMonth.cycle;
     var topicEl = document.getElementById('current-month-topic');
-    topicEl.textContent = data.currentMonth.topic ? data.currentMonth.topic : '（尚未設定本月主題）';
-    topicEl.style.color = data.currentMonth.topic ? 'var(--text-hi)' : 'var(--text-dim)';
+    var labelEl = document.getElementById('current-month-label');
+    if(data.currentTopic){
+      topicEl.textContent = data.currentTopic.topic;
+      topicEl.style.color = 'var(--text-hi)';
+      labelEl.textContent = '（'+data.currentTopic.month+'）';
+    } else {
+      topicEl.textContent = '（尚未設定本月主題）';
+      topicEl.style.color = 'var(--text-dim)';
+      labelEl.textContent = '';
+    }
     renderAdminPanel();
   }
 
   function renderAdminPanel(){
     var box = document.getElementById('admin-panel');
     if(box.style.display === 'none') return;
+    var suggestMonth = data.currentTopic ? data.currentTopic.month : thisMonthStr();
     box.innerHTML = '<div class="admin-box">'
       + '<p style="font-size:12px;color:var(--cyan);margin:0 0 10px;font-weight:600;">🔓 管理員模式</p>'
-      + '<div class="admin-row"><input type="text" id="admin-topic-input" placeholder="設定本月作業主題" value="'+esc(data.currentMonth.topic||'')+'"><button class="mini-btn primary-mini" id="admin-set-topic-btn">更新主題</button></div>'
-      + '<button class="danger-btn" id="admin-archive-btn">📦 封存本期作品集並開啟下一期</button>'
-      + '<p class="admin-note">封存後，本期所有已回報的作業會自動彙整進「作品展示區」，並開啟新的一期讓大家重新回報。</p>'
+      + '<div class="admin-row">'
+      + '<input type="text" id="admin-month-input" placeholder="月份（格式 yyyy-mm-01）" value="'+esc(suggestMonth)+'" style="max-width:180px;">'
+      + '<input type="text" id="admin-topic-input" placeholder="設定該月作業主題">'
+      + '</div>'
+      + '<button class="mini-btn primary-mini" id="admin-set-topic-btn">公告主題</button>'
+      + '<p class="admin-note">公告新主題後，「回報本月作業」會自動歸到這個月份；先前月份的作業會自動出現在作品展示區。</p>'
       + '</div>';
-    document.getElementById('admin-set-topic-btn').onclick = function(){
-      var v = document.getElementById('admin-topic-input').value.trim();
-      data.currentMonth.topic = v;
-      data.currentMonth.setAt = Date.now();
-      pushFeed('theme-set','📌','tone-violet','管理員設定本期主題為「'+esc(v)+'」');
-      saveData(data);
-      renderAll();
-    };
-    document.getElementById('admin-archive-btn').onclick = function(){
-      var cycle = data.currentMonth.cycle;
-      var topic = data.currentMonth.topic || '第 '+cycle+' 期';
-      var toArchive = data.homeworks.filter(function(h){ return h.cycle === cycle; });
-      toArchive.forEach(function(h){
-        data.showcase.push({ id: uid(), title: '['+topic+'] '+h.author+' 的作業', desc: h.content, link: h.link||'', author: h.author, createdAt: h.createdAt, tag: 'monthly', groupLabel: topic });
-      });
-      data.currentMonth = { cycle: cycle + 1, topic: '', setAt: Date.now() };
-      pushFeed('archive','📦','tone-amber','管理員封存了第 '+cycle+' 期作業（共 '+toArchive.length+' 件），已同步到作品展示區，開啟第 '+(cycle+1)+' 期');
-      saveData(data);
-      renderAll();
+    document.getElementById('admin-set-topic-btn').onclick = async function(){
+      var month = document.getElementById('admin-month-input').value.trim();
+      var topic = document.getElementById('admin-topic-input').value.trim();
+      if(!month || !topic){ alert('月份與主題都要填喔'); return; }
+      this.disabled = true;
+      try{
+        await apiPost('setTopic', { userId: currentUser.userId, month: month, topic: topic, selectionMethod: '管理員決選' });
+        await refreshData();
+      }catch(e){ alert(e.message); }
+      this.disabled = false;
     };
   }
 
+  /* ---------- 實戰案例 ---------- */
   function renderCases(){
     var box = document.getElementById('case-list');
     var arr = data.cases;
     if(arr.length === 0){ box.innerHTML = '<p class="empty">還沒有實戰案例分享。</p>'; return; }
     box.innerHTML = arr.slice().reverse().map(function(c){
-      var extra = '';
-      if(c.fileUrl && c.isImage) extra += '<img class="attach-preview" src="'+c.fileUrl+'">';
-      else if(c.fileUrl) extra += '<div><a class="attach-link" href="'+c.fileUrl+'" download="'+esc(c.fileName||'')+'">📄 '+esc(c.fileName||'附加檔案')+'</a></div>';
-      if(c.link) extra += '<div><a class="attach-link" href="'+esc(c.link)+'" target="_blank" rel="noopener">'+esc(c.link)+'</a></div>';
-      return '<div class="quest-card tone-pink"><div class="quest-body">'+esc(c.content)+'</div>'+extra+'<div class="quest-meta"><span class="author">'+esc(c.author)+'</span><span>'+fmtTime(c.createdAt)+'</span></div></div>';
+      var extra = c.link ? '<div><a class="attach-link" href="'+esc(c.link)+'" target="_blank" rel="noopener">'+esc(c.link)+'</a></div>' : '';
+      return '<div class="quest-card tone-pink"><div class="quest-body">'+esc(c.content)+'</div>'+extra+'<div class="quest-meta"><span class="author">'+esc(c.displayName)+'</span><span>'+fmtTime(c.timestamp)+'</span></div></div>';
     }).join('');
   }
 
+  /* ---------- 作品展示區 ---------- */
   function renderShowcase(){
     var box = document.getElementById('showcase-list');
-    var arr = data.showcase;
-    if(arr.length === 0){ box.innerHTML = '<p class="empty">還沒有作品上架，第一個分享你的作品吧。</p>'; return; }
     var tagLabel = { work: '作品', feedback: '任務回饋', monthly: '月作業' };
+    var items = [];
+
+    (data.showcase || []).forEach(function(s){
+      items.push({ tag: 'work', title: s.title, desc: s.desc, link: s.link, author: s.displayName, ts: parseTs(s.timestamp), groupLabel: '自由創作' });
+    });
+    data.wishes.forEach(function(w){
+      (w.claims || []).forEach(function(c){
+        if(c.completed && c.feedback){
+          items.push({ tag: 'feedback', title: '回饋：'+w.topic, desc: c.feedback, link: c.link, author: c.displayName, ts: parseTs(c.completedDate), groupLabel: w.topic });
+        }
+      });
+    });
+    var currentMonth = data.currentTopic ? data.currentTopic.month : null;
+    data.homeworks.forEach(function(h){
+      if(currentMonth && h.month === currentMonth) return; // 本期作業還在進行中，不進展示區
+      var topicRow = data.topics.find(function(t){ return t.month === h.month; });
+      var label = topicRow ? topicRow.topic : h.month;
+      items.push({ tag: 'monthly', title: '['+label+'] '+h.displayName+' 的作業', desc: h.content, link: h.link, author: h.displayName, ts: parseTs(h.timestamp), groupLabel: label });
+    });
+
+    if(items.length === 0){ box.innerHTML = '<p class="empty">還沒有作品上架，第一個分享你的作品吧。</p>'; return; }
+
     var groups = {};
     var order = [];
-    arr.forEach(function(s){
-      var g = s.groupLabel || '自由創作';
+    items.forEach(function(it){
+      var g = it.groupLabel || '自由創作';
       if(!groups[g]){ groups[g] = []; order.push(g); }
-      groups[g].push(s);
+      groups[g].push(it);
     });
     order.sort(function(a,b){
-      var lastA = Math.max.apply(null, groups[a].map(function(s){ return s.createdAt; }));
-      var lastB = Math.max.apply(null, groups[b].map(function(s){ return s.createdAt; }));
+      var lastA = Math.max.apply(null, groups[a].map(function(s){ return s.ts; }));
+      var lastB = Math.max.apply(null, groups[b].map(function(s){ return s.ts; }));
       return lastB - lastA;
     });
     box.innerHTML = order.map(function(g){
-      var items = groups[g].slice().sort(function(a,b){ return b.createdAt - a.createdAt; });
-      var cards = items.map(function(s){
+      var list = groups[g].slice().sort(function(a,b){ return b.ts - a.ts; });
+      var cards = list.map(function(s){
         var linkHtml = s.link ? '<a class="showcase-link" href="'+esc(s.link)+'" target="_blank" rel="noopener">'+esc(s.link)+'</a>' : '';
-        return '<div class="showcase-card"><span class="showcase-tag">'+(tagLabel[s.tag]||'作品')+'</span><p class="showcase-title">'+esc(s.title)+'</p><p class="showcase-desc">'+esc(s.desc)+'</p>'+linkHtml+'<div class="showcase-meta">'+esc(s.author)+' · '+fmtTime(s.createdAt)+'</div></div>';
+        return '<div class="showcase-card"><span class="showcase-tag">'+(tagLabel[s.tag]||'作品')+'</span><p class="showcase-title">'+esc(s.title)+'</p><p class="showcase-desc">'+esc(s.desc)+'</p>'+linkHtml+'<div class="showcase-meta">'+esc(s.author)+' · '+fmtTime(s.ts)+'</div></div>';
       }).join('');
-      return '<details class="showcase-folder" open><summary>📁 '+esc(g)+' <span class="folder-count">'+items.length+'</span></summary><div class="showcase-grid">'+cards+'</div></details>';
+      return '<details class="showcase-folder" open><summary>📁 '+esc(g)+' <span class="folder-count">'+list.length+'</span></summary><div class="showcase-grid">'+cards+'</div></details>';
     }).join('');
   }
 
+  /* ---------- 我的戰情室 ---------- */
   function renderMyOps(){
-    var name = currentUser ? currentUser.displayName : '';
     var activeBox = document.getElementById('myops-active-list');
     var authoredBox = document.getElementById('myops-authored-list');
     var postsBox = document.getElementById('myops-posts-list');
@@ -824,8 +861,9 @@
     var lineIdInput = document.getElementById('profile-lineid-input');
     if(currentUser && document.activeElement !== nameInput) nameInput.value = currentUser.displayName || '';
     if(currentUser && document.activeElement !== lineIdInput) lineIdInput.value = currentUser.lineId || '';
-    if(!name){
-      activeBox.innerHTML = '<p class="empty">輸入名字後即可查看你的戰情室。</p>';
+
+    if(!currentUser){
+      activeBox.innerHTML = '<p class="empty">請先登入。</p>';
       authoredBox.innerHTML = '';
       postsBox.innerHTML = '';
       document.getElementById('myops-active').textContent = 0;
@@ -834,35 +872,43 @@
       document.getElementById('myops-stamps').textContent = 0;
       return;
     }
-
-    var myActive = data.wishes.filter(function(w){ return w.claimedBy.indexOf(name) !== -1 && w.completedBy.indexOf(name) === -1; });
-    var myDoneCount = data.wishes.filter(function(w){ return w.completedBy.indexOf(name) !== -1; }).length;
-    var myAuthored = data.wishes.filter(function(w){ return w.author === name; });
+    var myUid = currentUser.userId;
+    var myActive = [];
+    var myDoneCount = 0;
+    data.wishes.forEach(function(w){
+      (w.claims || []).forEach(function(c){
+        if(c.userId !== myUid) return;
+        if(c.completed) myDoneCount++;
+        else myActive.push(w);
+      });
+    });
+    var myAuthored = data.wishes.filter(function(w){ return w.userId === myUid; });
 
     document.getElementById('myops-active').textContent = myActive.length;
     document.getElementById('myops-done').textContent = myDoneCount;
     document.getElementById('myops-authored').textContent = myAuthored.length;
-    document.getElementById('myops-stamps').textContent = data.stamps[name] || 0;
+    document.getElementById('myops-stamps').textContent = stampsFor(currentUser.displayName);
 
     activeBox.innerHTML = myActive.length === 0
       ? '<p class="empty">目前沒有進行中的任務，去許願樓認領一個吧。</p>'
       : myActive.slice().reverse().map(function(w){
-          return '<div class="quest-card tone-cyan"><div class="quest-body">'+esc(w.content)+'</div><div class="quest-meta"><span class="author">'+esc(w.author)+' 許願</span><span>'+fmtTime(w.createdAt)+'</span><span class="status-pill status-claimed">認領中</span></div></div>';
+          return '<div class="quest-card tone-cyan"><div class="quest-body">'+esc(w.topic)+'</div><div class="quest-meta"><span class="author">'+esc(w.displayName)+' 許願</span><span>'+fmtTime(w.timestamp)+'</span><span class="status-pill status-claimed">認領中</span></div></div>';
         }).join('');
 
     authoredBox.innerHTML = myAuthored.length === 0
       ? '<p class="empty">你還沒有發起任何許願。</p>'
       : myAuthored.slice().reverse().map(function(w){
-          var doneCount = w.completedBy.length;
-          var pill = doneCount > 0 ? '<span class="status-pill status-done">已有 '+doneCount+' 人完成</span>' : (w.claimedBy.length > 0 ? '<span class="status-pill status-claimed">'+w.claimedBy.length+' 人認領中</span>' : '<span class="status-pill status-open">待認領</span>');
-          return '<div class="quest-card"><div class="quest-body">'+esc(w.content)+'</div><div class="quest-meta"><span>'+fmtTime(w.createdAt)+'</span>'+pill+'</div></div>';
+          var claims = w.claims || [];
+          var doneCount = claims.filter(function(c){ return c.completed; }).length;
+          var pill = doneCount > 0 ? '<span class="status-pill status-done">已有 '+doneCount+' 人完成</span>' : (claims.length > 0 ? '<span class="status-pill status-claimed">'+claims.length+' 人認領中</span>' : '<span class="status-pill status-open">待認領</span>');
+          return '<div class="quest-card"><div class="quest-body">'+esc(w.topic)+'</div><div class="quest-meta"><span>'+fmtTime(w.timestamp)+'</span>'+pill+'</div></div>';
         }).join('');
 
     var posts = [];
-    data.themes.forEach(function(t){ if(t.author===name) posts.push({ tone:'tone-cyan', label:'主題候選', content:t.content, ts:t.createdAt }); });
-    data.homeworks.forEach(function(h){ if(h.author===name) posts.push({ tone:'tone-amber', label:'作業回報', content:h.content, ts:h.createdAt }); });
-    data.cases.forEach(function(c){ if(c.author===name) posts.push({ tone:'tone-pink', label:'實戰案例', content:c.content, ts:c.createdAt }); });
-    data.showcase.forEach(function(s){ if(s.author===name) posts.push({ tone:'tone-green', label:'作品展示', content:s.title+' — '+s.desc, ts:s.createdAt }); });
+    data.topicProposals.forEach(function(t){ if(t.userId===myUid) posts.push({ tone:'tone-cyan', label:'主題候選', content:t.proposedTopic, ts:parseTs(t.timestamp) }); });
+    data.homeworks.forEach(function(h){ if(h.userId===myUid) posts.push({ tone:'tone-amber', label:'作業回報', content:h.content, ts:parseTs(h.timestamp) }); });
+    data.cases.forEach(function(c){ if(c.userId===myUid) posts.push({ tone:'tone-pink', label:'實戰案例', content:c.content, ts:parseTs(c.timestamp) }); });
+    data.showcase.forEach(function(s){ if(s.userId===myUid) posts.push({ tone:'tone-green', label:'作品展示', content:s.title+' — '+s.desc, ts:parseTs(s.timestamp) }); });
     posts.sort(function(a,b){ return b.ts - a.ts; });
 
     postsBox.innerHTML = posts.length === 0
@@ -872,33 +918,15 @@
         }).join('');
   }
 
-  function renderMembers(){
-    var box = document.getElementById('member-tooltip');
-    var names = registeredMembers.slice().sort(function(a,b){
-      return new Date(a.createdAt) - new Date(b.createdAt);
-    }).map(function(u){ return u.displayName; });
-
-    if(names.length === 0){
-      box.innerHTML = '<p class="empty" style="padding:4px;">還沒有成員註冊。</p>';
-      document.getElementById('member-list').innerHTML = '<p class="empty">還沒有成員註冊。</p>';
-      return;
-    }
-    box.innerHTML = names.map(function(n){
-      return '<div class="member-tooltip-row"><b>'+esc(n)+'</b><span>'+(data.stamps[n]||0)+' 印章</span></div>';
-    }).join('');
-    document.getElementById('member-list').innerHTML = '<div class="member-name-list">'+names.map(function(n){
-      return '<span class="member-name-pill">'+esc(n)+'</span>';
-    }).join('')+'</div>';
-  }
-
+  /* ---------- 印章排行 ---------- */
   function renderBoard(){
     var name = currentUser ? currentUser.displayName : '';
-    var entries = Object.keys(data.stamps).map(function(k){ return [k, data.stamps[k]]; }).sort(function(a,b){ return b[1]-a[1]; });
+    var entries = data.stamps.map(function(s){ return [s.displayName, Number(s.totalStamps)||0]; }).sort(function(a,b){ return b[1]-a[1]; });
     document.getElementById('total-people').textContent = registeredMembers.length;
-    document.getElementById('my-stamps').textContent = name ? (data.stamps[name]||0) : 0;
-    document.getElementById('my-stamps-chip').textContent = name ? (data.stamps[name]||0) : 0;
+    document.getElementById('my-stamps').textContent = name ? stampsFor(name) : 0;
+    document.getElementById('my-stamps-chip').textContent = name ? stampsFor(name) : 0;
     document.getElementById('total-people-chip').textContent = registeredMembers.length;
-    document.getElementById('total-posts-chip').textContent = data.wishes.length + data.themes.length + data.homeworks.length + data.cases.length + data.showcase.length;
+    document.getElementById('total-posts-chip').textContent = data.wishes.length + data.topicProposals.length + data.homeworks.length + data.cases.length + data.showcase.length;
     var box = document.getElementById('leaderboard');
     if(entries.length === 0){ box.innerHTML = '<p class="empty">還沒有印章紀錄。</p>'; return; }
     box.innerHTML = entries.slice(0,5).map(function(e,i){
@@ -907,61 +935,154 @@
     }).join('');
   }
 
-  function renderAll(){
-    renderWishes();
-    renderThemes();
-    renderHomeworks();
-    renderCases();
-    renderShowcase();
-    renderMyOps();
-    renderBoard();
-    renderMembers();
-    renderFeed();
-    renderMonthBanner();
+  /* ---------- 社團成員 ---------- */
+  function renderMembers(){
+    var tooltipBox = document.getElementById('member-tooltip');
+    var listBox = document.getElementById('member-list');
+    var names = registeredMembers.slice().sort(function(a,b){ return parseTs(a.createdAt) - parseTs(b.createdAt); }).map(function(u){ return u.displayName; });
+    if(names.length === 0){
+      tooltipBox.innerHTML = '<p class="empty" style="padding:4px;">還沒有成員註冊。</p>';
+      listBox.innerHTML = '<p class="empty">還沒有成員註冊。</p>';
+      return;
+    }
+    tooltipBox.innerHTML = names.map(function(n){
+      return '<div class="member-tooltip-row"><b>'+esc(n)+'</b><span>'+stampsFor(n)+' 印章</span></div>';
+    }).join('');
+    listBox.innerHTML = '<div class="member-name-list">'+names.map(function(n){
+      return '<span class="member-name-pill">'+esc(n)+'</span>';
+    }).join('')+'</div>';
   }
+
+  /* ---------- 社團動態牆 ---------- */
+  function renderFeed(){
+    var box = document.getElementById('feed');
+    var events = [];
+    data.wishes.forEach(function(w){
+      events.push({ ts: parseTs(w.timestamp), icon: '✦', text: '<b>'+esc(w.displayName)+'</b> 許下新願望「'+esc(w.topic)+'」' });
+      (w.claims || []).forEach(function(c){
+        events.push({ ts: parseTs(c.claimedDate), icon: '▶', text: '<b>'+esc(c.displayName)+'</b> 認領了許願「'+esc(w.topic)+'」' });
+        if(c.completed){
+          events.push({ ts: parseTs(c.completedDate), icon: '✓', text: '<b>'+esc(c.displayName)+'</b> 完成了許願「'+esc(w.topic)+'」+1 印章' });
+        }
+      });
+    });
+    data.topicProposals.forEach(function(t){
+      events.push({ ts: parseTs(t.timestamp), icon: '▤', text: '<b>'+esc(t.displayName)+'</b> 投稿主題候選「'+esc(t.proposedTopic)+'」' });
+    });
+    data.homeworks.forEach(function(h){
+      events.push({ ts: parseTs(h.timestamp), icon: '▤', text: '<b>'+esc(h.displayName)+'</b> 回報作業「'+esc(h.content)+'」+1 印章' });
+    });
+    data.cases.forEach(function(c){
+      events.push({ ts: parseTs(c.timestamp), icon: '◈', text: '<b>'+esc(c.displayName)+'</b> 分享案例「'+esc(c.content)+'」' });
+    });
+    data.showcase.forEach(function(s){
+      events.push({ ts: parseTs(s.timestamp), icon: '❖', text: '<b>'+esc(s.displayName)+'</b> 上架作品「'+esc(s.title)+'」+1 印章' });
+    });
+    events.sort(function(a,b){ return b.ts - a.ts; });
+    events = events.slice(0, 30);
+    if(events.length === 0){ box.innerHTML = '<p class="empty">還沒有動態，快來發布第一則投稿。</p>'; return; }
+    box.innerHTML = events.map(function(f){
+      return '<div class="feed-item"><div class="feed-icon">'+f.icon+'</div><div><div class="feed-text">'+f.text+'</div><div class="feed-time">'+fmtTime(f.ts)+'</div></div></div>';
+    }).join('');
+  }
+
+  /* ---------- 投稿事件 ---------- */
+  document.getElementById('admin-toggle-btn').onclick = function(){
+    var box = document.getElementById('admin-panel');
+    box.style.display = (box.style.display === 'none' || !box.style.display) ? 'block' : 'none';
+    renderAdminPanel();
+  };
+
+  document.getElementById('wish-add').onclick = async function(){
+    if(!currentUser) return;
+    var input = document.getElementById('wish-input');
+    var v = input.value.trim();
+    var err = document.getElementById('wish-err');
+    err.style.display = 'none';
+    if(!v){ err.style.display = 'block'; return; }
+    this.disabled = true;
+    try{
+      await apiPost('addWish', { userId: currentUser.userId, displayName: currentUser.displayName, topic: v });
+      input.value = '';
+      await refreshData();
+    }catch(e){ err.textContent = e.message; err.style.display = 'block'; }
+    this.disabled = false;
+  };
+
+  document.getElementById('theme-add').onclick = async function(){
+    if(!currentUser) return;
+    var input = document.getElementById('theme-input');
+    var v = input.value.trim();
+    var err = document.getElementById('theme-err');
+    err.style.display = 'none';
+    if(!v){ err.style.display = 'block'; return; }
+    this.disabled = true;
+    try{
+      await apiPost('addTopicProposal', { userId: currentUser.userId, displayName: currentUser.displayName, month: nextMonthStr(), proposedTopic: v });
+      input.value = '';
+      await refreshData();
+    }catch(e){ err.textContent = e.message; err.style.display = 'block'; }
+    this.disabled = false;
+  };
+
+  document.getElementById('homework-add').onclick = async function(){
+    if(!currentUser) return;
+    var input = document.getElementById('homework-input');
+    var linkInput = document.getElementById('homework-link-input');
+    var v = input.value.trim();
+    var link = linkInput.value.trim();
+    var err = document.getElementById('homework-err');
+    err.style.display = 'none';
+    if(!v){ err.style.display = 'block'; return; }
+    this.disabled = true;
+    try{
+      var month = data.currentTopic ? data.currentTopic.month : thisMonthStr();
+      await apiPost('addHomework', { userId: currentUser.userId, displayName: currentUser.displayName, month: month, content: v, link: link });
+      input.value = ''; linkInput.value = '';
+      await refreshData();
+    }catch(e){ err.textContent = e.message; err.style.display = 'block'; }
+    this.disabled = false;
+  };
+
+  document.getElementById('case-add').onclick = async function(){
+    if(!currentUser) return;
+    var input = document.getElementById('case-input');
+    var linkInput = document.getElementById('case-link-input');
+    var v = input.value.trim();
+    var link = linkInput.value.trim();
+    var err = document.getElementById('case-err');
+    err.style.display = 'none';
+    if(!v){ err.style.display = 'block'; return; }
+    this.disabled = true;
+    try{
+      await apiPost('addCase', { userId: currentUser.userId, displayName: currentUser.displayName, content: v, link: link });
+      input.value = ''; linkInput.value = '';
+      await refreshData();
+    }catch(e){ err.textContent = e.message; err.style.display = 'block'; }
+    this.disabled = false;
+  };
+
+  document.getElementById('showcase-add').onclick = async function(){
+    if(!currentUser) return;
+    var titleInput = document.getElementById('showcase-title-input');
+    var descInput = document.getElementById('showcase-desc-input');
+    var linkInput = document.getElementById('showcase-link-input');
+    var title = titleInput.value.trim();
+    var desc = descInput.value.trim();
+    var link = linkInput.value.trim();
+    var err = document.getElementById('showcase-err');
+    err.style.display = 'none';
+    if(!title || !desc){ err.style.display = 'block'; return; }
+    this.disabled = true;
+    try{
+      await apiPost('addShowcase', { userId: currentUser.userId, displayName: currentUser.displayName, title: title, desc: desc, link: link });
+      titleInput.value=''; descInput.value=''; linkInput.value='';
+      await refreshData();
+    }catch(e){ err.textContent = e.message; err.style.display = 'block'; }
+    this.disabled = false;
+  };
 
   /* ---------- 帳號系統 ---------- */
-  var API_URL = 'https://script.google.com/macros/s/AKfycbwL2ls0Snp4qujzWC7tZcghUOvvAHkge-6vVEebcchwfPWihP28desA8VVsP-iMjP_l/exec';
-  var SESSION_KEY = 'ai_club_session_v1';
-  var currentUser = null;
-
-  async function apiPost(action, payload){
-    var body = Object.assign({ action: action }, payload || {});
-    var res = await fetch(API_URL, { method: 'POST', body: JSON.stringify(body) });
-    var json = await res.json();
-    if(json.error) throw new Error(json.error);
-    return json.data;
-  }
-  async function apiGet(action, params){
-    var qs = new URLSearchParams(Object.assign({ action: action }, params || {})).toString();
-    var res = await fetch(API_URL + '?' + qs);
-    var json = await res.json();
-    if(json.error) throw new Error(json.error);
-    return json;
-  }
-
-  var registeredMembers = [];
-  async function fetchMembers(){
-    try{
-      registeredMembers = await apiGet('listUsers');
-    }catch(e){
-      registeredMembers = [];
-    }
-  }
-
-  function loadSession(){
-    try{
-      var raw = localStorage.getItem(SESSION_KEY);
-      return raw ? JSON.parse(raw) : null;
-    }catch(e){ return null; }
-  }
-  function saveSession(user){
-    try{ localStorage.setItem(SESSION_KEY, JSON.stringify(user)); }catch(e){}
-  }
-  function clearSession(){
-    try{ localStorage.removeItem(SESSION_KEY); }catch(e){}
-  }
-
   function showAuthScreen(){
     document.getElementById('auth-screen').style.display = 'block';
     document.getElementById('app-screen').style.display = 'none';
@@ -971,7 +1092,7 @@
     document.getElementById('app-screen').style.display = 'block';
     document.getElementById('greet-name').textContent = currentUser.displayName;
     document.getElementById('admin-toggle-btn').style.display = (currentUser.role === 'admin') ? 'inline-block' : 'none';
-    fetchMembers().then(renderAll);
+    refreshData();
   }
 
   document.querySelectorAll('.auth-tab-btn').forEach(function(btn){
@@ -1071,7 +1192,7 @@
       currentUser.lineId = updated.lineId;
       saveSession(currentUser);
       document.getElementById('greet-name').textContent = currentUser.displayName;
-      renderAll();
+      await refreshData();
     }catch(e){
       err.textContent = e.message;
       err.style.display = 'block';
@@ -1088,146 +1209,8 @@
       showAuthScreen();
     }
   })();
-
-  document.getElementById('admin-toggle-btn').onclick = function(){
-    var box = document.getElementById('admin-panel');
-    box.style.display = (box.style.display === 'none' || !box.style.display) ? 'block' : 'none';
-    renderAdminPanel();
-  };
-
-  document.getElementById('wish-add').onclick = function(){
-    var name = getName('wish-err'); if(!name) return;
-    var input = document.getElementById('wish-input');
-    var v = input.value.trim();
-    document.getElementById('wish-err').style.display = 'none';
-    if(!v){ document.getElementById('wish-err').style.display = 'block'; return; }
-    data.wishes.push({ id: uid(), content: v, author: name, claimedBy: [], completedBy: [], createdAt: Date.now() });
-    pushFeed('wish','✦','','<b>'+esc(name)+'</b> 許下新願望「'+esc(v)+'」');
-    saveData(data); input.value=''; renderAll();
-  };
-  document.getElementById('theme-add').onclick = function(){
-    var name = getName('theme-err'); if(!name) return;
-    var input = document.getElementById('theme-input');
-    var v = input.value.trim();
-    document.getElementById('theme-err').style.display = 'none';
-    if(!v){ document.getElementById('theme-err').style.display = 'block'; return; }
-    data.themes.push({ id: uid(), content: v, author: name, createdAt: Date.now() });
-    pushFeed('theme','▤','tone-cyan','<b>'+esc(name)+'</b> 投稿主題候選「'+esc(v)+'」');
-    saveData(data); input.value=''; renderAll();
-  };
-  document.getElementById('homework-add').onclick = function(){
-    var name = getName('homework-err'); if(!name) return;
-    var input = document.getElementById('homework-input');
-    var linkInput = document.getElementById('homework-link-input');
-    var v = input.value.trim();
-    var link = linkInput.value.trim();
-    document.getElementById('homework-err').style.display = 'none';
-    if(!v){ document.getElementById('homework-err').style.display = 'block'; return; }
-    data.homeworks.push({ id: uid(), content: v, author: name, cycle: data.currentMonth.cycle, link: link, fileUrl: pendingHomeworkFile.url, fileName: pendingHomeworkFile.name, isImage: pendingHomeworkFile.isImage, createdAt: Date.now() });
-    addStamp(name);
-    pushFeed('homework','▤','tone-amber','<b>'+esc(name)+'</b> 回報作業「'+esc(v)+'」+1 印章');
-    saveData(data);
-    input.value=''; linkInput.value='';
-    pendingHomeworkFile = { url:'', name:'', isImage:false };
-    homeworkFileInput.value = '';
-    document.getElementById('homework-file-name').textContent = '';
-    document.getElementById('homework-file-preview').innerHTML = '';
-    renderAll();
-  };
-
-  function setupFileAttach(fileInputId, nameLabelId, previewId, onChange){
-    var fileInput = document.getElementById(fileInputId);
-    fileInput.addEventListener('change', function(){
-      var file = fileInput.files[0];
-      var nameLabel = document.getElementById(nameLabelId);
-      var preview = document.getElementById(previewId);
-      if(!file){ onChange({ url:'', name:'', isImage:false }); nameLabel.textContent=''; preview.innerHTML=''; return; }
-      var maxSize = 300*1024;
-      if(file.type.startsWith('image/')){
-        var reader = new FileReader();
-        reader.onload = function(ev){
-          var img = new Image();
-          img.onload = function(){
-            var maxW = 480;
-            var scale = Math.min(1, maxW / img.width);
-            var canvas = document.createElement('canvas');
-            canvas.width = img.width * scale;
-            canvas.height = img.height * scale;
-            var ctx = canvas.getContext('2d');
-            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-            var dataUrl = canvas.toDataURL('image/jpeg', 0.72);
-            onChange({ url: dataUrl, name: file.name, isImage: true });
-            nameLabel.textContent = file.name;
-            preview.innerHTML = '<img class="attach-preview" src="'+dataUrl+'">';
-          };
-          img.src = ev.target.result;
-        };
-        reader.readAsDataURL(file);
-      } else {
-        if(file.size > maxSize){
-          nameLabel.textContent = '檔案過大（超過 300KB），請改貼外部連結網址';
-          onChange({ url:'', name:'', isImage:false });
-          preview.innerHTML = '';
-          return;
-        }
-        var reader2 = new FileReader();
-        reader2.onload = function(ev){
-          onChange({ url: ev.target.result, name: file.name, isImage: false });
-          nameLabel.textContent = file.name;
-          preview.innerHTML = '<a class="attach-link" href="'+ev.target.result+'" download="'+esc(file.name)+'">📄 '+esc(file.name)+'（點我下載預覽）</a>';
-        };
-        reader2.readAsDataURL(file);
-      }
-    });
-  }
-
-  var pendingCaseFile = { url:'', name:'', isImage:false };
-  var caseFileInput = document.getElementById('case-file-input');
-  setupFileAttach('case-file-input','case-file-name','case-file-preview', function(v){ pendingCaseFile = v; });
-
-  document.getElementById('case-add').onclick = function(){
-    var name = getName('case-err'); if(!name) return;
-    var input = document.getElementById('case-input');
-    var linkInput = document.getElementById('case-link-input');
-    var v = input.value.trim();
-    var link = linkInput.value.trim();
-    document.getElementById('case-err').style.display = 'none';
-    if(!v){ document.getElementById('case-err').style.display = 'block'; return; }
-    data.cases.push({ id: uid(), content: v, author: name, link: link, fileUrl: pendingCaseFile.url, fileName: pendingCaseFile.name, isImage: pendingCaseFile.isImage, createdAt: Date.now() });
-    addStamp(name);
-    pushFeed('case','◈','tone-pink','<b>'+esc(name)+'</b> 分享案例「'+esc(v)+'」+1 印章');
-    saveData(data);
-    input.value=''; linkInput.value=''; pendingCaseFile = { url:'', name:'', isImage:false };
-    caseFileInput.value = '';
-    document.getElementById('case-file-name').textContent = '';
-    document.getElementById('case-file-preview').innerHTML = '';
-    renderAll();
-  };
-
-  var pendingHomeworkFile = { url:'', name:'', isImage:false, link:'' };
-  var homeworkFileInput = document.getElementById('homework-file-input');
-  setupFileAttach('homework-file-input','homework-file-name','homework-file-preview', function(v){ pendingHomeworkFile.url = v.url; pendingHomeworkFile.name = v.name; pendingHomeworkFile.isImage = v.isImage; });
-
-  document.getElementById('showcase-add').onclick = function(){
-    var name = getName('showcase-err'); if(!name) return;
-    var titleInput = document.getElementById('showcase-title-input');
-    var descInput = document.getElementById('showcase-desc-input');
-    var linkInput = document.getElementById('showcase-link-input');
-    var title = titleInput.value.trim();
-    var desc = descInput.value.trim();
-    var link = linkInput.value.trim();
-    document.getElementById('showcase-err').style.display = 'none';
-    if(!title || !desc){ document.getElementById('showcase-err').style.display = 'block'; return; }
-    data.showcase.push({ id: uid(), title: title, desc: desc, link: link, author: name, createdAt: Date.now(), tag: 'work', groupLabel: '自由創作' });
-    addStamp(name);
-    pushFeed('showcase','❖','tone-green','<b>'+esc(name)+'</b> 上架作品「'+esc(title)+'」+1 印章');
-    saveData(data);
-    titleInput.value=''; descInput.value=''; linkInput.value='';
-    renderAll();
-  };
-
-  renderAll();
 })();
+
 </script>
 </body>
 </html>
