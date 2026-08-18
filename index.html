@@ -357,6 +357,16 @@
         <div class="admin-row"><input type="password" id="login-password" placeholder="密碼"></div>
         <button class="primary" id="login-submit-btn" style="width:100%;">登入</button>
         <p class="err-msg" id="login-err"></p>
+        <p style="text-align:right;margin:10px 0 0;"><a href="#" id="forgot-pw-link" style="font-size:12px;color:var(--text-mid);">忘記密碼？</a></p>
+      </div>
+
+      <div id="auth-panel-forgot" style="display:none;">
+        <p style="font-size:13px;color:var(--text-mid);margin:0 0 10px;">輸入註冊時用的 email，我們會寄一組臨時密碼給你。</p>
+        <div class="admin-row"><input type="text" id="forgot-email" placeholder="公司 email"></div>
+        <button class="primary" id="forgot-submit-btn" style="width:100%;">寄送臨時密碼</button>
+        <p class="err-msg" id="forgot-err"></p>
+        <p id="forgot-success" style="font-size:13px;color:var(--cyan);margin:10px 0 0;display:none;">已寄出！請到信箱收信（含垃圾郵件夾）。</p>
+        <p style="text-align:right;margin:10px 0 0;"><a href="#" id="back-to-login-link" style="font-size:12px;color:var(--text-mid);">回登入</a></p>
       </div>
 
       <div id="auth-panel-register" style="display:none;">
@@ -365,7 +375,7 @@
         <div class="admin-row"><input type="password" id="reg-password" placeholder="設定密碼"></div>
         <button class="primary" id="reg-submit-btn" style="width:100%;">註冊</button>
         <p class="err-msg" id="reg-err"></p>
-        <p class="admin-note">⚠️ 這是內部小工具的輕量登入，請不要使用你在其他系統的密碼。</p>
+        <p class="admin-note">⚠️ 這是內部小工具的輕量登入，請不要使用你在其他系統的密碼。僅限公司信箱註冊。</p>
       </div>
     </header>
   </div>
@@ -424,7 +434,7 @@
             <p class="section-label" style="margin-top:0;">本月作業主題 · 第 <span id="cycle-num">1</span> 期</p>
             <p id="current-month-topic" style="font-size:19px;font-weight:700;margin:0;"></p>
           </div>
-          <button class="mini-btn" id="admin-toggle-btn">🔒 管理員模式</button>
+          <button class="mini-btn" id="admin-toggle-btn" style="display:none;">🔒 管理員模式</button>
         </div>
         <div id="admin-panel" style="display:none;"></div>
 
@@ -575,8 +585,6 @@
     }catch(e){}
     return d;
   }
-  var ADMIN_PASSWORD = 'frontier888';
-  var isAdmin = false;
   function saveData(d){
     try{ localStorage.setItem(STORE_KEY, JSON.stringify(d)); }catch(e){}
   }
@@ -739,45 +747,32 @@
   function renderAdminPanel(){
     var box = document.getElementById('admin-panel');
     if(box.style.display === 'none') return;
-    if(!isAdmin){
-      box.innerHTML = '<div class="admin-box">'
-        + '<div class="admin-row"><input type="password" id="admin-pw-input" placeholder="輸入管理員密碼"><button class="mini-btn primary-mini" id="admin-unlock-btn">解鎖</button></div>'
-        + '<p class="err-msg" id="admin-pw-err">密碼錯誤</p>'
-        + '<p class="admin-note">⚠️ 這是前端防呆密碼，僅避免誤觸，不是真正的權限系統；之後串接後端資料庫時會做正式權限控管。</p>'
-        + '</div>';
-      document.getElementById('admin-unlock-btn').onclick = function(){
-        var pw = document.getElementById('admin-pw-input').value;
-        if(pw === ADMIN_PASSWORD){ isAdmin = true; renderAdminPanel(); }
-        else { document.getElementById('admin-pw-err').style.display = 'block'; }
-      };
-    } else {
-      box.innerHTML = '<div class="admin-box">'
-        + '<p style="font-size:12px;color:var(--cyan);margin:0 0 10px;font-weight:600;">🔓 管理員模式已解鎖</p>'
-        + '<div class="admin-row"><input type="text" id="admin-topic-input" placeholder="設定本月作業主題" value="'+esc(data.currentMonth.topic||'')+'"><button class="mini-btn primary-mini" id="admin-set-topic-btn">更新主題</button></div>'
-        + '<button class="danger-btn" id="admin-archive-btn">📦 封存本期作品集並開啟下一期</button>'
-        + '<p class="admin-note">封存後，本期所有已回報的作業會自動彙整進「作品展示區」，並開啟新的一期讓大家重新回報。</p>'
-        + '</div>';
-      document.getElementById('admin-set-topic-btn').onclick = function(){
-        var v = document.getElementById('admin-topic-input').value.trim();
-        data.currentMonth.topic = v;
-        data.currentMonth.setAt = Date.now();
-        pushFeed('theme-set','📌','tone-violet','管理員設定本期主題為「'+esc(v)+'」');
-        saveData(data);
-        renderAll();
-      };
-      document.getElementById('admin-archive-btn').onclick = function(){
-        var cycle = data.currentMonth.cycle;
-        var topic = data.currentMonth.topic || '第 '+cycle+' 期';
-        var toArchive = data.homeworks.filter(function(h){ return h.cycle === cycle; });
-        toArchive.forEach(function(h){
-          data.showcase.push({ id: uid(), title: '['+topic+'] '+h.author+' 的作業', desc: h.content, link: h.link||'', author: h.author, createdAt: h.createdAt, tag: 'monthly', groupLabel: topic });
-        });
-        data.currentMonth = { cycle: cycle + 1, topic: '', setAt: Date.now() };
-        pushFeed('archive','📦','tone-amber','管理員封存了第 '+cycle+' 期作業（共 '+toArchive.length+' 件），已同步到作品展示區，開啟第 '+(cycle+1)+' 期');
-        saveData(data);
-        renderAll();
-      };
-    }
+    box.innerHTML = '<div class="admin-box">'
+      + '<p style="font-size:12px;color:var(--cyan);margin:0 0 10px;font-weight:600;">🔓 管理員模式</p>'
+      + '<div class="admin-row"><input type="text" id="admin-topic-input" placeholder="設定本月作業主題" value="'+esc(data.currentMonth.topic||'')+'"><button class="mini-btn primary-mini" id="admin-set-topic-btn">更新主題</button></div>'
+      + '<button class="danger-btn" id="admin-archive-btn">📦 封存本期作品集並開啟下一期</button>'
+      + '<p class="admin-note">封存後，本期所有已回報的作業會自動彙整進「作品展示區」，並開啟新的一期讓大家重新回報。</p>'
+      + '</div>';
+    document.getElementById('admin-set-topic-btn').onclick = function(){
+      var v = document.getElementById('admin-topic-input').value.trim();
+      data.currentMonth.topic = v;
+      data.currentMonth.setAt = Date.now();
+      pushFeed('theme-set','📌','tone-violet','管理員設定本期主題為「'+esc(v)+'」');
+      saveData(data);
+      renderAll();
+    };
+    document.getElementById('admin-archive-btn').onclick = function(){
+      var cycle = data.currentMonth.cycle;
+      var topic = data.currentMonth.topic || '第 '+cycle+' 期';
+      var toArchive = data.homeworks.filter(function(h){ return h.cycle === cycle; });
+      toArchive.forEach(function(h){
+        data.showcase.push({ id: uid(), title: '['+topic+'] '+h.author+' 的作業', desc: h.content, link: h.link||'', author: h.author, createdAt: h.createdAt, tag: 'monthly', groupLabel: topic });
+      });
+      data.currentMonth = { cycle: cycle + 1, topic: '', setAt: Date.now() };
+      pushFeed('archive','📦','tone-amber','管理員封存了第 '+cycle+' 期作業（共 '+toArchive.length+' 件），已同步到作品展示區，開啟第 '+(cycle+1)+' 期');
+      saveData(data);
+      renderAll();
+    };
   }
 
   function renderCases(){
@@ -879,25 +874,13 @@
 
   function renderMembers(){
     var box = document.getElementById('member-tooltip');
-    var map = {};
-    function touch(name, ts){
-      if(!name) return;
-      if(!map[name] || ts < map[name]) map[name] = ts;
-    }
-    data.wishes.forEach(function(w){
-      touch(w.author, w.createdAt);
-      w.claimedBy.forEach(function(n){ touch(n, w.createdAt); });
-    });
-    data.themes.forEach(function(t){ touch(t.author, t.createdAt); });
-    data.homeworks.forEach(function(h){ touch(h.author, h.createdAt); });
-    data.cases.forEach(function(c){ touch(c.author, c.createdAt); });
-    data.showcase.forEach(function(s){ touch(s.author, s.createdAt); });
-    Object.keys(data.stamps).forEach(function(n){ if(!map[n]) map[n] = Date.now(); });
+    var names = registeredMembers.slice().sort(function(a,b){
+      return new Date(a.createdAt) - new Date(b.createdAt);
+    }).map(function(u){ return u.displayName; });
 
-    var names = Object.keys(map).sort(function(a,b){ return map[a]-map[b]; });
     if(names.length === 0){
-      box.innerHTML = '<p class="empty" style="padding:4px;">還沒有成員加入紀錄。</p>';
-      document.getElementById('member-list').innerHTML = '<p class="empty">還沒有成員加入紀錄。</p>';
+      box.innerHTML = '<p class="empty" style="padding:4px;">還沒有成員註冊。</p>';
+      document.getElementById('member-list').innerHTML = '<p class="empty">還沒有成員註冊。</p>';
       return;
     }
     box.innerHTML = names.map(function(n){
@@ -910,10 +893,11 @@
 
   function renderBoard(){
     var name = currentUser ? currentUser.displayName : '';
-    document.getElementById('total-people').textContent = entries.length;
+    var entries = Object.keys(data.stamps).map(function(k){ return [k, data.stamps[k]]; }).sort(function(a,b){ return b[1]-a[1]; });
+    document.getElementById('total-people').textContent = registeredMembers.length;
     document.getElementById('my-stamps').textContent = name ? (data.stamps[name]||0) : 0;
     document.getElementById('my-stamps-chip').textContent = name ? (data.stamps[name]||0) : 0;
-    document.getElementById('total-people-chip').textContent = entries.length;
+    document.getElementById('total-people-chip').textContent = registeredMembers.length;
     document.getElementById('total-posts-chip').textContent = data.wishes.length + data.themes.length + data.homeworks.length + data.cases.length + data.showcase.length;
     var box = document.getElementById('leaderboard');
     if(entries.length === 0){ box.innerHTML = '<p class="empty">還沒有印章紀錄。</p>'; return; }
@@ -948,6 +932,22 @@
     if(json.error) throw new Error(json.error);
     return json.data;
   }
+  async function apiGet(action, params){
+    var qs = new URLSearchParams(Object.assign({ action: action }, params || {})).toString();
+    var res = await fetch(API_URL + '?' + qs);
+    var json = await res.json();
+    if(json.error) throw new Error(json.error);
+    return json;
+  }
+
+  var registeredMembers = [];
+  async function fetchMembers(){
+    try{
+      registeredMembers = await apiGet('listUsers');
+    }catch(e){
+      registeredMembers = [];
+    }
+  }
 
   function loadSession(){
     try{
@@ -970,7 +970,8 @@
     document.getElementById('auth-screen').style.display = 'none';
     document.getElementById('app-screen').style.display = 'block';
     document.getElementById('greet-name').textContent = currentUser.displayName;
-    renderAll();
+    document.getElementById('admin-toggle-btn').style.display = (currentUser.role === 'admin') ? 'inline-block' : 'none';
+    fetchMembers().then(renderAll);
   }
 
   document.querySelectorAll('.auth-tab-btn').forEach(function(btn){
@@ -979,8 +980,38 @@
       btn.classList.add('active');
       document.getElementById('auth-panel-login').style.display = btn.dataset.authtab === 'login' ? 'block' : 'none';
       document.getElementById('auth-panel-register').style.display = btn.dataset.authtab === 'register' ? 'block' : 'none';
+      document.getElementById('auth-panel-forgot').style.display = 'none';
     };
   });
+
+  document.getElementById('forgot-pw-link').onclick = function(e){
+    e.preventDefault();
+    document.getElementById('auth-panel-login').style.display = 'none';
+    document.getElementById('auth-panel-forgot').style.display = 'block';
+  };
+  document.getElementById('back-to-login-link').onclick = function(e){
+    e.preventDefault();
+    document.getElementById('auth-panel-forgot').style.display = 'none';
+    document.getElementById('forgot-success').style.display = 'none';
+    document.getElementById('auth-panel-login').style.display = 'block';
+  };
+  document.getElementById('forgot-submit-btn').onclick = async function(){
+    var email = document.getElementById('forgot-email').value.trim();
+    var err = document.getElementById('forgot-err');
+    var success = document.getElementById('forgot-success');
+    err.style.display = 'none';
+    success.style.display = 'none';
+    if(!email){ err.textContent = '請輸入 email'; err.style.display = 'block'; return; }
+    this.disabled = true; this.textContent = '寄送中...';
+    try{
+      await apiPost('forgotPassword', { email: email });
+      success.style.display = 'block';
+    }catch(e){
+      err.textContent = e.message;
+      err.style.display = 'block';
+    }
+    this.disabled = false; this.textContent = '寄送臨時密碼';
+  };
 
   document.getElementById('login-submit-btn').onclick = async function(){
     var email = document.getElementById('login-email').value.trim();
