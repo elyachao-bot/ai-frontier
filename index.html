@@ -315,7 +315,16 @@
   .showcase-desc{font-size:14px;color:var(--text-mid);margin:0;word-break:break-word;}
   .showcase-link{font-size:13px;color:var(--cyan);text-decoration:none;word-break:break-all;}
   .showcase-link:hover{text-decoration:underline;}
-  .showcase-meta{font-size:12px;color:var(--text-dim);margin-top:auto;padding-top:6px;border-top:1px solid var(--line);}
+  .showcase-meta{font-size:12px;color:var(--text-dim);margin-top:8px;padding-top:6px;border-top:1px solid var(--line);}
+  .like-btn{
+    margin-top:8px;align-self:flex-start;
+    display:flex;align-items:center;gap:6px;
+    background:var(--bg-panel);border:1px solid var(--line-strong);color:var(--text-mid);
+    border-radius:20px;padding:5px 12px;font-size:13px;cursor:pointer;
+    font-family:var(--font-display);font-weight:600;
+  }
+  .like-btn:hover{border-color:var(--pink);color:var(--pink);}
+  .like-btn.liked{border-color:var(--pink);color:var(--pink);background:rgba(255,119,163,0.1);}
 
   .showcase-folder{
     border:1px solid var(--line);border-radius:12px;background:var(--bg-panel-2);
@@ -561,7 +570,8 @@
   var SESSION_KEY = 'ai_club_session_v1';
   var currentUser = null;
   var registeredMembers = [];
-  var data = { wishes: [], topicProposals: [], topics: [], currentTopic: null, homeworks: [], cases: [], showcase: [], stamps: [] };
+  var nameById = {};
+  var data = { wishes: [], topicProposals: [], topics: [], currentTopic: null, homeworks: [], cases: [], showcase: [], stamps: [], likes: [] };
 
   async function apiPost(action, payload){
     var body = Object.assign({ action: action }, payload || {});
@@ -586,10 +596,15 @@
 
   /* ---------- 小工具 ---------- */
   function esc(s){ var d = document.createElement('div'); d.textContent = s == null ? '' : s; return d.innerHTML; }
+
+  // 相容新（ISO/UTC）與舊（yyyy-MM-dd HH:mm:ss.SSS，Sheet 時區）兩種時間格式
   function parseTs(str){
     if(!str) return 0;
     if(typeof str === 'number') return str;
-    var t = new Date(String(str).replace(' ', 'T')).getTime();
+    var s = String(str);
+    var t = new Date(s).getTime();
+    if(!isNaN(t)) return t;
+    t = new Date(s.replace(' ', 'T')).getTime();
     return isNaN(t) ? 0 : t;
   }
   function fmtTime(str){
@@ -604,7 +619,14 @@
   function nextMonthStr(){ var d = new Date(); d.setMonth(d.getMonth()+1); return monthStr(d); }
 
   function getName(){ return currentUser ? currentUser.displayName : null; }
+  // 名稱一律以帳號 ID 反查目前最新的顯示名稱，改名字後所有地方會自動同步
+  function nameFor(userId, fallback){ return nameById[userId] || fallback || ''; }
+  function stampsById(userId){
+    var row = data.stamps.find(function(s){ return s.userId === userId; });
+    return row ? (Number(row.totalStamps) || 0) : 0;
+  }
   function stampsFor(name){
+    // 保留給找不到 userId 時的備援（理論上不該用到）
     var row = data.stamps.find(function(s){ return s.displayName === name; });
     return row ? (Number(row.totalStamps) || 0) : 0;
   }
@@ -621,7 +643,24 @@
       data.cases = all.cases || [];
       data.showcase = all.showcase || [];
       data.stamps = all.stamps || [];
+      data.likes = all.likes || [];
       registeredMembers = all.users || [];
+
+      nameById = {};
+      registeredMembers.forEach(function(u){ nameById[u.userId] = u.displayName; });
+
+      // 自我修復：如果伺服器上的名字/角色已經跟本機快取的不一樣（例如換瀏覽器、改名字後沒重登），自動同步
+      if(currentUser){
+        var me = registeredMembers.find(function(u){ return u.userId === currentUser.userId; });
+        if(me && (me.displayName !== currentUser.displayName || me.role !== currentUser.role)){
+          currentUser.displayName = me.displayName;
+          currentUser.role = me.role;
+          saveSession(currentUser);
+          document.getElementById('greet-name').textContent = currentUser.displayName;
+          document.getElementById('admin-toggle-btn').style.display = (currentUser.role === 'admin') ? 'inline-block' : 'none';
+        }
+      }
+
       renderAll();
     }catch(e){
       console.error('讀取資料失敗', e);
@@ -688,7 +727,7 @@
       var iCompleted = mine && mine.completed;
       var actions = !iClaimed ? '<button class="mini-btn" data-act="claim" data-id="'+w.wishId+'">認領</button>' : '';
       var claimerTags = claimCount > 0
-        ? '<div class="claimer-tags">'+claims.map(function(c){ return '<span class="claimer-tag">'+esc(c.displayName)+(c.completed?' ✓':'')+'</span>'; }).join('')+'</div>'
+        ? '<div class="claimer-tags">'+claims.map(function(c){ return '<span class="claimer-tag">'+esc(nameFor(c.userId, c.displayName))+(c.completed?' ✓':'')+'</span>'; }).join('')+'</div>'
         : '';
       var feedbackBox = (iClaimed && !iCompleted)
         ? '<div class="feedback-box" data-wish="'+w.wishId+'">'
@@ -700,7 +739,7 @@
           + '</div><p class="err-msg fb-err">請先輸入回饋內容</p>'
           + '</div>'
         : '';
-      return '<div class="quest-card '+tone+'"><div class="quest-body">'+esc(w.topic)+'</div><div class="quest-meta"><span class="author">'+esc(w.displayName)+' 許願</span><span>'+fmtTime(w.timestamp)+'</span>'+pill+actions+'</div>'+claimerTags+feedbackBox+'</div>';
+      return '<div class="quest-card '+tone+'"><div class="quest-body">'+esc(w.topic)+'</div><div class="quest-meta"><span class="author">'+esc(nameFor(w.userId, w.displayName))+' 許願</span><span>'+fmtTime(w.timestamp)+'</span>'+pill+actions+'</div>'+claimerTags+feedbackBox+'</div>';
     }).join('');
 
     box.querySelectorAll('[data-act="claim"]').forEach(function(btn){
@@ -737,7 +776,7 @@
     var arr = data.topicProposals;
     if(arr.length === 0){ box.innerHTML = '<p class="empty">還沒有主題候選。</p>'; return; }
     box.innerHTML = arr.slice().reverse().map(function(t){
-      return '<div class="quest-card tone-cyan"><div class="quest-body">'+esc(t.proposedTopic)+'</div><div class="quest-meta"><span class="author">'+esc(t.displayName)+'</span><span>'+fmtTime(t.timestamp)+'</span></div></div>';
+      return '<div class="quest-card tone-cyan"><div class="quest-body">'+esc(t.proposedTopic)+'</div><div class="quest-meta"><span class="author">'+esc(nameFor(t.userId, t.displayName))+'</span><span>'+fmtTime(t.timestamp)+'</span></div></div>';
     }).join('');
   }
 
@@ -748,7 +787,7 @@
     if(arr.length === 0){ box.innerHTML = '<p class="empty">本期還沒有人回報作業。</p>'; return; }
     box.innerHTML = arr.slice().reverse().map(function(h){
       var extra = h.link ? '<div><a class="attach-link" href="'+esc(h.link)+'" target="_blank" rel="noopener">'+esc(h.link)+'</a></div>' : '';
-      return '<div class="quest-card tone-amber"><div class="quest-body">'+esc(h.content)+'</div>'+extra+'<div class="quest-meta"><span class="author">'+esc(h.displayName)+'</span><span>'+fmtTime(h.timestamp)+'</span></div></div>';
+      return '<div class="quest-card tone-amber"><div class="quest-body">'+esc(h.content)+'</div>'+extra+'<div class="quest-meta"><span class="author">'+esc(nameFor(h.userId, h.displayName))+'</span><span>'+fmtTime(h.timestamp)+'</span></div></div>';
     }).join('');
   }
 
@@ -800,32 +839,40 @@
     if(arr.length === 0){ box.innerHTML = '<p class="empty">還沒有實戰案例分享。</p>'; return; }
     box.innerHTML = arr.slice().reverse().map(function(c){
       var extra = c.link ? '<div><a class="attach-link" href="'+esc(c.link)+'" target="_blank" rel="noopener">'+esc(c.link)+'</a></div>' : '';
-      return '<div class="quest-card tone-pink"><div class="quest-body">'+esc(c.content)+'</div>'+extra+'<div class="quest-meta"><span class="author">'+esc(c.displayName)+'</span><span>'+fmtTime(c.timestamp)+'</span></div></div>';
+      return '<div class="quest-card tone-pink"><div class="quest-body">'+esc(c.content)+'</div>'+extra+'<div class="quest-meta"><span class="author">'+esc(nameFor(c.userId, c.displayName))+'</span><span>'+fmtTime(c.timestamp)+'</span></div></div>';
     }).join('');
   }
 
-  /* ---------- 作品展示區 ---------- */
+  /* ---------- 作品展示區（含按讚） ---------- */
+  function likeCount(targetId){
+    return data.likes.filter(function(l){ return l.targetType === 'showcase' && l.targetId === targetId; }).length;
+  }
+  function iLiked(targetId){
+    if(!currentUser) return false;
+    return data.likes.some(function(l){ return l.targetType === 'showcase' && l.targetId === targetId && l.userId === currentUser.userId; });
+  }
+
   function renderShowcase(){
     var box = document.getElementById('showcase-list');
     var tagLabel = { work: '作品', feedback: '任務回饋', monthly: '月作業' };
     var items = [];
 
     (data.showcase || []).forEach(function(s){
-      items.push({ tag: 'work', title: s.title, desc: s.desc, link: s.link, author: s.displayName, ts: parseTs(s.timestamp), groupLabel: '自由創作' });
+      items.push({ id: s.id, tag: 'work', title: s.title, desc: s.desc, link: s.link, author: nameFor(s.userId, s.displayName), ts: parseTs(s.timestamp), groupLabel: '自由創作' });
     });
     data.wishes.forEach(function(w){
       (w.claims || []).forEach(function(c){
         if(c.completed && c.feedback){
-          items.push({ tag: 'feedback', title: '回饋：'+w.topic, desc: c.feedback, link: c.link, author: c.displayName, ts: parseTs(c.completedDate), groupLabel: w.topic });
+          items.push({ id: 'fb-'+w.wishId+'-'+c.userId, tag: 'feedback', title: '回饋：'+w.topic, desc: c.feedback, link: c.link, author: nameFor(c.userId, c.displayName), ts: parseTs(c.completedDate), groupLabel: w.topic });
         }
       });
     });
     var currentMonth = data.currentTopic ? data.currentTopic.month : null;
     data.homeworks.forEach(function(h){
-      if(currentMonth && h.month === currentMonth) return; // 本期作業還在進行中，不進展示區
+      if(currentMonth && h.month === currentMonth) return;
       var topicRow = data.topics.find(function(t){ return t.month === h.month; });
       var label = topicRow ? topicRow.topic : h.month;
-      items.push({ tag: 'monthly', title: '['+label+'] '+h.displayName+' 的作業', desc: h.content, link: h.link, author: h.displayName, ts: parseTs(h.timestamp), groupLabel: label });
+      items.push({ id: 'hw-'+h.timestamp+'-'+h.userId, tag: 'monthly', title: '['+label+'] '+nameFor(h.userId, h.displayName)+' 的作業', desc: h.content, link: h.link, author: nameFor(h.userId, h.displayName), ts: parseTs(h.timestamp), groupLabel: label });
     });
 
     if(items.length === 0){ box.innerHTML = '<p class="empty">還沒有作品上架，第一個分享你的作品吧。</p>'; return; }
@@ -846,10 +893,24 @@
       var list = groups[g].slice().sort(function(a,b){ return b.ts - a.ts; });
       var cards = list.map(function(s){
         var linkHtml = s.link ? '<a class="showcase-link" href="'+esc(s.link)+'" target="_blank" rel="noopener">'+esc(s.link)+'</a>' : '';
-        return '<div class="showcase-card"><span class="showcase-tag">'+(tagLabel[s.tag]||'作品')+'</span><p class="showcase-title">'+esc(s.title)+'</p><p class="showcase-desc">'+esc(s.desc)+'</p>'+linkHtml+'<div class="showcase-meta">'+esc(s.author)+' · '+fmtTime(s.ts)+'</div></div>';
+        var liked = iLiked(s.id);
+        var count = likeCount(s.id);
+        var likeBtn = '<button class="like-btn'+(liked?' liked':'')+'" data-like-id="'+esc(s.id)+'">'+(liked?'❤️':'🤍')+' <span>'+count+'</span></button>';
+        return '<div class="showcase-card"><span class="showcase-tag">'+(tagLabel[s.tag]||'作品')+'</span><p class="showcase-title">'+esc(s.title)+'</p><p class="showcase-desc">'+esc(s.desc)+'</p>'+linkHtml+'<div class="showcase-meta">'+esc(s.author)+' · '+fmtTime(s.ts)+'</div>'+likeBtn+'</div>';
       }).join('');
       return '<details class="showcase-folder" open><summary>📁 '+esc(g)+' <span class="folder-count">'+list.length+'</span></summary><div class="showcase-grid">'+cards+'</div></details>';
     }).join('');
+
+    box.querySelectorAll('.like-btn').forEach(function(btn){
+      btn.onclick = async function(){
+        if(!currentUser) return;
+        btn.disabled = true;
+        try{
+          await apiPost('toggleLike', { userId: currentUser.userId, targetType: 'showcase', targetId: btn.dataset.likeId });
+          await refreshData();
+        }catch(e){ alert(e.message); btn.disabled = false; }
+      };
+    });
   }
 
   /* ---------- 我的戰情室 ---------- */
@@ -887,12 +948,12 @@
     document.getElementById('myops-active').textContent = myActive.length;
     document.getElementById('myops-done').textContent = myDoneCount;
     document.getElementById('myops-authored').textContent = myAuthored.length;
-    document.getElementById('myops-stamps').textContent = stampsFor(currentUser.displayName);
+    document.getElementById('myops-stamps').textContent = stampsById(myUid);
 
     activeBox.innerHTML = myActive.length === 0
       ? '<p class="empty">目前沒有進行中的任務，去許願樓認領一個吧。</p>'
       : myActive.slice().reverse().map(function(w){
-          return '<div class="quest-card tone-cyan"><div class="quest-body">'+esc(w.topic)+'</div><div class="quest-meta"><span class="author">'+esc(w.displayName)+' 許願</span><span>'+fmtTime(w.timestamp)+'</span><span class="status-pill status-claimed">認領中</span></div></div>';
+          return '<div class="quest-card tone-cyan"><div class="quest-body">'+esc(w.topic)+'</div><div class="quest-meta"><span class="author">'+esc(nameFor(w.userId, w.displayName))+' 許願</span><span>'+fmtTime(w.timestamp)+'</span><span class="status-pill status-claimed">認領中</span></div></div>';
         }).join('');
 
     authoredBox.innerHTML = myAuthored.length === 0
@@ -920,11 +981,10 @@
 
   /* ---------- 印章排行 ---------- */
   function renderBoard(){
-    var name = currentUser ? currentUser.displayName : '';
-    var entries = data.stamps.map(function(s){ return [s.displayName, Number(s.totalStamps)||0]; }).sort(function(a,b){ return b[1]-a[1]; });
+    var entries = data.stamps.map(function(s){ return [nameFor(s.userId, s.displayName), Number(s.totalStamps)||0]; }).sort(function(a,b){ return b[1]-a[1]; });
     document.getElementById('total-people').textContent = registeredMembers.length;
-    document.getElementById('my-stamps').textContent = name ? stampsFor(name) : 0;
-    document.getElementById('my-stamps-chip').textContent = name ? stampsFor(name) : 0;
+    document.getElementById('my-stamps').textContent = currentUser ? stampsById(currentUser.userId) : 0;
+    document.getElementById('my-stamps-chip').textContent = currentUser ? stampsById(currentUser.userId) : 0;
     document.getElementById('total-people-chip').textContent = registeredMembers.length;
     document.getElementById('total-posts-chip').textContent = data.wishes.length + data.topicProposals.length + data.homeworks.length + data.cases.length + data.showcase.length;
     var box = document.getElementById('leaderboard');
@@ -939,17 +999,17 @@
   function renderMembers(){
     var tooltipBox = document.getElementById('member-tooltip');
     var listBox = document.getElementById('member-list');
-    var names = registeredMembers.slice().sort(function(a,b){ return parseTs(a.createdAt) - parseTs(b.createdAt); }).map(function(u){ return u.displayName; });
+    var names = registeredMembers.slice().sort(function(a,b){ return parseTs(a.createdAt) - parseTs(b.createdAt); });
     if(names.length === 0){
       tooltipBox.innerHTML = '<p class="empty" style="padding:4px;">還沒有成員註冊。</p>';
       listBox.innerHTML = '<p class="empty">還沒有成員註冊。</p>';
       return;
     }
-    tooltipBox.innerHTML = names.map(function(n){
-      return '<div class="member-tooltip-row"><b>'+esc(n)+'</b><span>'+stampsFor(n)+' 印章</span></div>';
+    tooltipBox.innerHTML = names.map(function(u){
+      return '<div class="member-tooltip-row"><b>'+esc(u.displayName)+'</b><span>'+stampsById(u.userId)+' 印章</span></div>';
     }).join('');
-    listBox.innerHTML = '<div class="member-name-list">'+names.map(function(n){
-      return '<span class="member-name-pill">'+esc(n)+'</span>';
+    listBox.innerHTML = '<div class="member-name-list">'+names.map(function(u){
+      return '<span class="member-name-pill">'+esc(u.displayName)+'</span>';
     }).join('')+'</div>';
   }
 
@@ -958,25 +1018,25 @@
     var box = document.getElementById('feed');
     var events = [];
     data.wishes.forEach(function(w){
-      events.push({ ts: parseTs(w.timestamp), icon: '✦', text: '<b>'+esc(w.displayName)+'</b> 許下新願望「'+esc(w.topic)+'」' });
+      events.push({ ts: parseTs(w.timestamp), icon: '✦', text: '<b>'+esc(nameFor(w.userId, w.displayName))+'</b> 許下新願望「'+esc(w.topic)+'」' });
       (w.claims || []).forEach(function(c){
-        events.push({ ts: parseTs(c.claimedDate), icon: '▶', text: '<b>'+esc(c.displayName)+'</b> 認領了許願「'+esc(w.topic)+'」' });
+        events.push({ ts: parseTs(c.claimedDate), icon: '▶', text: '<b>'+esc(nameFor(c.userId, c.displayName))+'</b> 認領了許願「'+esc(w.topic)+'」' });
         if(c.completed){
-          events.push({ ts: parseTs(c.completedDate), icon: '✓', text: '<b>'+esc(c.displayName)+'</b> 完成了許願「'+esc(w.topic)+'」+1 印章' });
+          events.push({ ts: parseTs(c.completedDate), icon: '✓', text: '<b>'+esc(nameFor(c.userId, c.displayName))+'</b> 完成了許願「'+esc(w.topic)+'」+1 印章' });
         }
       });
     });
     data.topicProposals.forEach(function(t){
-      events.push({ ts: parseTs(t.timestamp), icon: '▤', text: '<b>'+esc(t.displayName)+'</b> 投稿主題候選「'+esc(t.proposedTopic)+'」' });
+      events.push({ ts: parseTs(t.timestamp), icon: '▤', text: '<b>'+esc(nameFor(t.userId, t.displayName))+'</b> 投稿主題候選「'+esc(t.proposedTopic)+'」' });
     });
     data.homeworks.forEach(function(h){
-      events.push({ ts: parseTs(h.timestamp), icon: '▤', text: '<b>'+esc(h.displayName)+'</b> 回報作業「'+esc(h.content)+'」+1 印章' });
+      events.push({ ts: parseTs(h.timestamp), icon: '▤', text: '<b>'+esc(nameFor(h.userId, h.displayName))+'</b> 回報作業「'+esc(h.content)+'」+1 印章' });
     });
     data.cases.forEach(function(c){
-      events.push({ ts: parseTs(c.timestamp), icon: '◈', text: '<b>'+esc(c.displayName)+'</b> 分享案例「'+esc(c.content)+'」' });
+      events.push({ ts: parseTs(c.timestamp), icon: '◈', text: '<b>'+esc(nameFor(c.userId, c.displayName))+'</b> 分享案例「'+esc(c.content)+'」' });
     });
     data.showcase.forEach(function(s){
-      events.push({ ts: parseTs(s.timestamp), icon: '❖', text: '<b>'+esc(s.displayName)+'</b> 上架作品「'+esc(s.title)+'」+1 印章' });
+      events.push({ ts: parseTs(s.timestamp), icon: '❖', text: '<b>'+esc(nameFor(s.userId, s.displayName))+'</b> 上架作品「'+esc(s.title)+'」+1 印章' });
     });
     events.sort(function(a,b){ return b.ts - a.ts; });
     events = events.slice(0, 30);
