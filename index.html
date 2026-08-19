@@ -352,6 +352,10 @@
 </head>
 <body>
 <div class="scanline"></div>
+<div id="build-badge" style="position:fixed;right:10px;bottom:8px;z-index:50;font-family:'Rajdhani','Noto Sans TC',sans-serif;font-size:11px;line-height:1.5;color:#8891ae;background:rgba(28,36,56,0.85);border:1px solid #374264;border-radius:8px;padding:6px 10px;pointer-events:none;">
+  <div>build 2026-08-19</div>
+  <div>台北時間 <span id="tw-clock">--:--:--</span></div>
+</div>
 <div class="wrap">
 
   <!-- AUTH SCREEN -->
@@ -532,6 +536,20 @@
           <p class="err-msg" id="profile-err"></p>
         </div>
 
+        <div class="admin-box" style="margin-bottom:16px;">
+          <p style="font-size:13px;color:var(--text-mid);margin:0 0 10px;font-weight:500;">修改密碼</p>
+          <div class="admin-row">
+            <input type="password" id="profile-oldpw-input" placeholder="目前密碼（用忘記密碼收到的臨時密碼也可以）">
+          </div>
+          <div class="admin-row">
+            <input type="password" id="profile-newpw-input" placeholder="新密碼（至少 4 個字元）">
+            <input type="password" id="profile-newpw2-input" placeholder="再輸入一次新密碼">
+          </div>
+          <button class="mini-btn primary-mini" id="profile-pw-save-btn">修改密碼</button>
+          <p class="err-msg" id="profile-pw-err"></p>
+          <p id="profile-pw-success" style="font-size:13px;color:var(--cyan);margin:10px 0 0;display:none;">密碼已更新，下次登入請用新密碼。</p>
+        </div>
+
         <div class="stat-row" style="grid-template-columns:repeat(auto-fit,minmax(110px,1fr));">
           <div class="stat-box"><div class="stat-label">進行中任務</div><div class="stat-val" id="myops-active">0</div></div>
           <div class="stat-box"><div class="stat-label">已完成任務</div><div class="stat-val" id="myops-done">0</div></div>
@@ -575,24 +593,41 @@
   var API_URL = 'https://script.google.com/macros/s/AKfycbwL2ls0Snp4qujzWC7tZcghUOvvAHkge-6vVEebcchwfPWihP28desA8VVsP-iMjP_l/exec';
   var SESSION_KEY = 'ai_club_session_v1';
   var currentUser = null;
+  var pollTimer = null; // 背景定期刷新用：個人操作已經改成樂觀更新不用等，但還是要讓「別人新貼的東西」定時同步進來
   var registeredMembers = [];
   var nameById = {};
   var data = { wishes: [], topicProposals: [], topics: [], currentTopic: null, homeworks: [], cases: [], showcase: [], stamps: [], likes: [] };
 
   async function apiPost(action, payload){
     var body = Object.assign({ action: action }, payload || {});
-    var res = await fetch(API_URL, { method: 'POST', body: JSON.stringify(body) });
+    var res = await fetch(API_URL, { method: 'POST', body: JSON.stringify(body), cache: 'no-store' });
     var json = await res.json();
     if(json.error) throw new Error(json.error);
     return json.data;
   }
+  // 加上 cache:'no-store' + 時間戳記亂數（_）避免瀏覽器把 GET 請求的回應快取住，
+  // 否則同一組網址（?action=getAll）重複打，瀏覽器可能直接吐舊的回應，畫面時間/資料就會卡在舊的
   async function apiGet(action, params){
-    var qs = new URLSearchParams(Object.assign({ action: action }, params || {})).toString();
-    var res = await fetch(API_URL + '?' + qs);
+    var qs = new URLSearchParams(Object.assign({ action: action }, params || {}, { _: Date.now() })).toString();
+    var res = await fetch(API_URL + '?' + qs, { cache: 'no-store' });
     var json = await res.json();
     if(json.error) throw new Error(json.error);
     return json;
   }
+
+  // 右下角小徽章：不管裝置系統時區設定為何，強制用 Asia/Taipei 時區換算出正確台北時間。
+  // 如果這個時鐘跟大家手錶上的時間對不上，代表是使用者裝置的系統時鐘/時區設定有問題，不是網站程式的 bug。
+  (function startTaipeiClock(){
+    var el = document.getElementById('tw-clock');
+    if(!el) return;
+    function tick(){
+      try{
+        el.textContent = new Date().toLocaleTimeString('zh-TW', { timeZone: 'Asia/Taipei', hourCycle: 'h23' });
+      }catch(e){ el.textContent = new Date().toLocaleTimeString(); }
+    }
+    tick();
+    setInterval(tick, 1000);
+  })();
 
   function loadSession(){
     try{ var raw = localStorage.getItem(SESSION_KEY); return raw ? JSON.parse(raw) : null; }catch(e){ return null; }
@@ -613,11 +648,18 @@
     t = new Date(s.replace(' ', 'T')).getTime();
     return isNaN(t) ? 0 : t;
   }
+  // ⚠️ 固定轉成「台北時間」顯示，不吃使用者裝置自己的系統時區設定。
+  // 之前是用 d.getMonth()/d.getHours() 這種會受「瀏覽器本機時區」影響的寫法，
+  // 如果有人的電腦/手機系統時區不是台北，畫面上看到的時間就會跟大家對不上。
+  var TW_TZ_FORMATTER = new Intl.DateTimeFormat('zh-TW', {
+    timeZone: 'Asia/Taipei', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23'
+  });
   function fmtTime(str){
     var t = parseTs(str);
     if(!t) return '';
-    var d = new Date(t);
-    return (d.getMonth()+1)+'/'+d.getDate()+' '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');
+    var parts = {};
+    TW_TZ_FORMATTER.formatToParts(new Date(t)).forEach(function(p){ parts[p.type] = p.value; });
+    return parts.month + '/' + parts.day + ' ' + parts.hour + ':' + parts.minute;
   }
   function pad2(n){ return String(n).padStart(2,'0'); }
   function monthStr(d){ return d.getFullYear()+'-'+pad2(d.getMonth()+1)+'-01'; }
@@ -635,6 +677,12 @@
     // 保留給找不到 userId 時的備援（理論上不該用到）
     var row = data.stamps.find(function(s){ return s.displayName === name; });
     return row ? (Number(row.totalStamps) || 0) : 0;
+  }
+  // 樂觀更新用：把後端回傳的最新印章列直接塞回本機的 data.stamps，不用整包重打 getAll
+  function upsertStampsRow(row){
+    if(!row) return;
+    var idx = data.stamps.findIndex(function(s){ return s.userId === row.userId; });
+    if(idx >= 0) data.stamps[idx] = row; else data.stamps.push(row);
   }
 
   /* ---------- 資料刷新 ---------- */
@@ -753,8 +801,10 @@
         if(!currentUser) return;
         btn.disabled = true;
         try{
-          await apiPost('claimWish', { wishId: btn.dataset.id, userId: currentUser.userId, displayName: currentUser.displayName });
-          await refreshData();
+          var result = await apiPost('claimWish', { wishId: btn.dataset.id, userId: currentUser.userId, displayName: currentUser.displayName });
+          var w = data.wishes.find(function(w){ return w.wishId === result.wishId; });
+          if(w){ w.claims = result.claims; w.status = result.status; }
+          renderAll();
         }catch(e){ alert(e.message); btn.disabled = false; }
       };
     });
@@ -769,8 +819,11 @@
         err.style.display = 'none';
         btn.disabled = true;
         try{
-          await apiPost('completeWish', { wishId: btn.dataset.id, userId: currentUser.userId, displayName: currentUser.displayName, feedback: content, link: link });
-          await refreshData();
+          var result = await apiPost('completeWish', { wishId: btn.dataset.id, userId: currentUser.userId, displayName: currentUser.displayName, feedback: content, link: link });
+          var w = data.wishes.find(function(w){ return w.wishId === result.wishId; });
+          if(w) w.claims = result.claims;
+          upsertStampsRow(result.stampsRow);
+          renderAll();
         }catch(e){ alert(e.message); btn.disabled = false; }
       };
     });
@@ -831,8 +884,10 @@
       if(!month || !topic){ alert('月份與主題都要填喔'); return; }
       this.disabled = true;
       try{
-        await apiPost('setTopic', { userId: currentUser.userId, month: month, topic: topic, selectionMethod: '管理員決選' });
-        await refreshData();
+        var result = await apiPost('setTopic', { userId: currentUser.userId, month: month, topic: topic, selectionMethod: '管理員決選' });
+        data.topics.push(result);
+        data.currentTopic = result;
+        renderAll();
       }catch(e){ alert(e.message); }
       this.disabled = false;
     };
@@ -912,8 +967,12 @@
         if(!currentUser) return;
         btn.disabled = true;
         try{
-          await apiPost('toggleLike', { userId: currentUser.userId, targetType: 'showcase', targetId: btn.dataset.likeId });
-          await refreshData();
+          var result = await apiPost('toggleLike', { userId: currentUser.userId, targetType: 'showcase', targetId: btn.dataset.likeId });
+          data.likes = data.likes.filter(function(l){
+            return !(l.targetType === result.targetType && l.targetId === result.targetId && l.userId === result.userId);
+          });
+          if(result.liked) data.likes.push({ targetType: result.targetType, targetId: result.targetId, userId: result.userId, timestamp: result.timestamp });
+          renderAll();
         }catch(e){ alert(e.message); btn.disabled = false; }
       };
     });
@@ -1068,9 +1127,10 @@
     if(!v){ err.style.display = 'block'; return; }
     this.disabled = true;
     try{
-      await apiPost('addWish', { userId: currentUser.userId, displayName: currentUser.displayName, topic: v });
+      var result = await apiPost('addWish', { userId: currentUser.userId, displayName: currentUser.displayName, topic: v });
+      data.wishes.push(result.wish);
       input.value = '';
-      await refreshData();
+      renderAll();
     }catch(e){ err.textContent = e.message; err.style.display = 'block'; }
     this.disabled = false;
   };
@@ -1084,9 +1144,10 @@
     if(!v){ err.style.display = 'block'; return; }
     this.disabled = true;
     try{
-      await apiPost('addTopicProposal', { userId: currentUser.userId, displayName: currentUser.displayName, month: nextMonthStr(), proposedTopic: v });
+      var result = await apiPost('addTopicProposal', { userId: currentUser.userId, displayName: currentUser.displayName, month: nextMonthStr(), proposedTopic: v });
+      data.topicProposals.push(result);
       input.value = '';
-      await refreshData();
+      renderAll();
     }catch(e){ err.textContent = e.message; err.style.display = 'block'; }
     this.disabled = false;
   };
@@ -1103,9 +1164,11 @@
     this.disabled = true;
     try{
       var month = data.currentTopic ? data.currentTopic.month : thisMonthStr();
-      await apiPost('addHomework', { userId: currentUser.userId, displayName: currentUser.displayName, month: month, content: v, link: link });
+      var result = await apiPost('addHomework', { userId: currentUser.userId, displayName: currentUser.displayName, month: month, content: v, link: link });
+      data.homeworks.push(result.homework);
+      upsertStampsRow(result.stampsRow);
       input.value = ''; linkInput.value = '';
-      await refreshData();
+      renderAll();
     }catch(e){ err.textContent = e.message; err.style.display = 'block'; }
     this.disabled = false;
   };
@@ -1121,9 +1184,10 @@
     if(!v){ err.style.display = 'block'; return; }
     this.disabled = true;
     try{
-      await apiPost('addCase', { userId: currentUser.userId, displayName: currentUser.displayName, content: v, link: link });
+      var result = await apiPost('addCase', { userId: currentUser.userId, displayName: currentUser.displayName, content: v, link: link });
+      data.cases.push(result);
       input.value = ''; linkInput.value = '';
-      await refreshData();
+      renderAll();
     }catch(e){ err.textContent = e.message; err.style.display = 'block'; }
     this.disabled = false;
   };
@@ -1141,9 +1205,11 @@
     if(!title || !desc){ err.style.display = 'block'; return; }
     this.disabled = true;
     try{
-      await apiPost('addShowcase', { userId: currentUser.userId, displayName: currentUser.displayName, title: title, desc: desc, link: link });
+      var result = await apiPost('addShowcase', { userId: currentUser.userId, displayName: currentUser.displayName, title: title, desc: desc, link: link });
+      data.showcase.push(result.showcase);
+      upsertStampsRow(result.stampsRow);
       titleInput.value=''; descInput.value=''; linkInput.value='';
-      await refreshData();
+      renderAll();
     }catch(e){ err.textContent = e.message; err.style.display = 'block'; }
     this.disabled = false;
   };
@@ -1159,6 +1225,10 @@
     document.getElementById('greet-name').textContent = currentUser.displayName;
     document.getElementById('admin-toggle-btn').style.display = (currentUser.role === 'admin') ? 'inline-block' : 'none';
     refreshData();
+    // 個人操作都已經是樂觀更新（不用等這個），這裡只是每 25 秒背景同步一次，
+    // 讓「別人新貼的許願/作業/案例/作品」也會自動出現，不用手動重整整頁
+    if(pollTimer) clearInterval(pollTimer);
+    pollTimer = setInterval(refreshData, 25000);
   }
 
   document.querySelectorAll('.auth-tab-btn').forEach(function(btn){
@@ -1242,6 +1312,7 @@
   document.getElementById('logout-btn').onclick = function(){
     currentUser = null;
     clearSession();
+    if(pollTimer){ clearInterval(pollTimer); pollTimer = null; }
     showAuthScreen();
   };
 
@@ -1258,12 +1329,41 @@
       currentUser.lineId = updated.lineId;
       saveSession(currentUser);
       document.getElementById('greet-name').textContent = currentUser.displayName;
-      await refreshData();
+      // 順便把本機快取的成員清單/名稱對照表也同步一份，其他地方（排行榜、動態牆…）馬上就會顯示新名字
+      var me = registeredMembers.find(function(u){ return u.userId === currentUser.userId; });
+      if(me) me.displayName = updated.displayName;
+      nameById[currentUser.userId] = updated.displayName;
+      renderAll();
     }catch(e){
       err.textContent = e.message;
       err.style.display = 'block';
     }
     this.disabled = false; this.textContent = '儲存';
+  };
+
+  document.getElementById('profile-pw-save-btn').onclick = async function(){
+    var oldPw = document.getElementById('profile-oldpw-input').value;
+    var newPw = document.getElementById('profile-newpw-input').value;
+    var newPw2 = document.getElementById('profile-newpw2-input').value;
+    var err = document.getElementById('profile-pw-err');
+    var success = document.getElementById('profile-pw-success');
+    err.style.display = 'none';
+    success.style.display = 'none';
+    if(!oldPw || !newPw){ err.textContent = '請輸入目前密碼與新密碼'; err.style.display = 'block'; return; }
+    if(newPw.length < 4){ err.textContent = '新密碼至少要 4 個字元'; err.style.display = 'block'; return; }
+    if(newPw !== newPw2){ err.textContent = '兩次輸入的新密碼不一樣'; err.style.display = 'block'; return; }
+    this.disabled = true; this.textContent = '修改中...';
+    try{
+      await apiPost('changePassword', { userId: currentUser.userId, oldPassword: oldPw, newPassword: newPw });
+      document.getElementById('profile-oldpw-input').value = '';
+      document.getElementById('profile-newpw-input').value = '';
+      document.getElementById('profile-newpw2-input').value = '';
+      success.style.display = 'block';
+    }catch(e){
+      err.textContent = e.message;
+      err.style.display = 'block';
+    }
+    this.disabled = false; this.textContent = '修改密碼';
   };
 
   (function initAuth(){
