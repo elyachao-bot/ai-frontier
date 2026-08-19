@@ -593,15 +593,30 @@
   var API_URL = 'https://script.google.com/macros/s/AKfycbwL2ls0Snp4qujzWC7tZcghUOvvAHkge-6vVEebcchwfPWihP28desA8VVsP-iMjP_l/exec';
   var SESSION_KEY = 'ai_club_session_v1';
   var currentUser = null;
-  var pollTimer = null; // 背景定期刷新用：個人操作已經改成樂觀更新不用等，但還是要讓「別人新貼的東西」定時同步進來
   var registeredMembers = [];
   var nameById = {};
   var data = { wishes: [], topicProposals: [], topics: [], currentTopic: null, homeworks: [], cases: [], showcase: [], stamps: [], likes: [] };
 
+  // Apps Script 偶爾會在忙碌/逾時的時候回傳 Google 的 HTML 錯誤頁而不是我們的 JSON，
+  // 這裡統一處理：先試著解析 JSON，失敗的話重試一次，還是失敗就丟出一個看得懂的中文錯誤，
+  // 不要讓使用者看到「Unexpected token '<' ... is not valid JSON」這種原始錯誤訊息。
+  async function fetchJson(url, opts){
+    var lastErr;
+    for(var attempt = 0; attempt < 2; attempt++){
+      try{
+        var res = await fetch(url, opts);
+        var text = await res.text();
+        return JSON.parse(text);
+      }catch(e){
+        lastErr = e;
+        if(attempt === 0){ await new Promise(function(r){ setTimeout(r, 700); }); }
+      }
+    }
+    throw new Error('伺服器暫時忙碌或連線逾時，請稍後再試一次');
+  }
   async function apiPost(action, payload){
     var body = Object.assign({ action: action }, payload || {});
-    var res = await fetch(API_URL, { method: 'POST', body: JSON.stringify(body), cache: 'no-store' });
-    var json = await res.json();
+    var json = await fetchJson(API_URL, { method: 'POST', body: JSON.stringify(body), cache: 'no-store' });
     if(json.error) throw new Error(json.error);
     return json.data;
   }
@@ -609,8 +624,7 @@
   // 否則同一組網址（?action=getAll）重複打，瀏覽器可能直接吐舊的回應，畫面時間/資料就會卡在舊的
   async function apiGet(action, params){
     var qs = new URLSearchParams(Object.assign({ action: action }, params || {}, { _: Date.now() })).toString();
-    var res = await fetch(API_URL + '?' + qs, { cache: 'no-store' });
-    var json = await res.json();
+    var json = await fetchJson(API_URL + '?' + qs, { cache: 'no-store' });
     if(json.error) throw new Error(json.error);
     return json;
   }
@@ -1225,10 +1239,8 @@
     document.getElementById('greet-name').textContent = currentUser.displayName;
     document.getElementById('admin-toggle-btn').style.display = (currentUser.role === 'admin') ? 'inline-block' : 'none';
     refreshData();
-    // 個人操作都已經是樂觀更新（不用等這個），這裡只是每 25 秒背景同步一次，
-    // 讓「別人新貼的許願/作業/案例/作品」也會自動出現，不用手動重整整頁
-    if(pollTimer) clearInterval(pollTimer);
-    pollTimer = setInterval(refreshData, 25000);
+    // 註：個人操作已經是樂觀更新不用等 refreshData；曾經加過背景輪詢自動同步別人新貼的內容，
+    // 但為了先求穩定、減少對後端的額外負擔先拿掉了，之後想看到別人的新內容手動重整頁面即可
   }
 
   document.querySelectorAll('.auth-tab-btn').forEach(function(btn){
@@ -1312,7 +1324,6 @@
   document.getElementById('logout-btn').onclick = function(){
     currentUser = null;
     clearSession();
-    if(pollTimer){ clearInterval(pollTimer); pollTimer = null; }
     showAuthScreen();
   };
 
