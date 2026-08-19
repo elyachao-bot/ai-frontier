@@ -587,46 +587,172 @@
   </div>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
 (function(){
-  /* ---------- API ---------- */
-  var API_URL = 'https://script.google.com/macros/s/AKfycbwL2ls0Snp4qujzWC7tZcghUOvvAHkge-6vVEebcchwfPWihP28desA8VVsP-iMjP_l/exec';
+  /* ---------- API（Supabase 版；改寫日期 2026-08-19，取代原本的 Apps Script） ---------- */
+  // ⚠️ 這兩個是公開資訊，不是機密：anon key 本來就設計成可以放在瀏覽器程式碼裡。
+  // 真正機密的資料庫密碼、service_role key 完全沒有出現在這份前端檔案裡。
+  var SUPABASE_URL = 'https://rmajwrawvtmysqycqcpe.supabase.co';
+  var SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJtYWp3cmF3dnRteXNxeWNxY3BlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODcxMjAxNDQsImV4cCI6MjEwMjY5NjE0NH0.upONEn1c1thGmJylVThohzH80_Ww1Os7nmFASdHBFxs';
+  var sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
   var SESSION_KEY = 'ai_club_session_v1';
   var currentUser = null;
   var registeredMembers = [];
   var nameById = {};
   var data = { wishes: [], topicProposals: [], topics: [], currentTopic: null, homeworks: [], cases: [], showcase: [], stamps: [], likes: [] };
 
-  // Apps Script 偶爾會在忙碌/逾時的時候回傳 Google 的 HTML 錯誤頁而不是我們的 JSON，
-  // 這裡統一處理：先試著解析 JSON，失敗的話重試一次，還是失敗就丟出一個看得懂的中文錯誤，
-  // 不要讓使用者看到「Unexpected token '<' ... is not valid JSON」這種原始錯誤訊息。
-  async function fetchJson(url, opts){
-    var lastErr;
-    for(var attempt = 0; attempt < 2; attempt++){
-      try{
-        var res = await fetch(url, opts);
-        var text = await res.text();
-        return JSON.parse(text);
-      }catch(e){
-        lastErr = e;
-        if(attempt === 0){ await new Promise(function(r){ setTimeout(r, 700); }); }
-      }
-    }
-    throw new Error('伺服器暫時忙碌或連線逾時，請稍後再試一次');
+  // 小工具：包一層，把 Supabase 回傳的 {data, error} 轉成「成功回傳資料 / 失敗就 throw」，
+  // 這樣呼叫端的寫法（try/catch 抓 e.message）跟原本 Apps Script 版本完全一樣，不用改。
+  async function sbSelect(table, orderCol){
+    var q = sb.from(table).select('*');
+    if(orderCol) q = q.order(orderCol, { ascending: true });
+    var res = await q;
+    if(res.error) throw new Error(res.error.message);
+    return res.data || [];
   }
+  async function sbRpc(fn, params){
+    var res = await sb.rpc(fn, params);
+    if(res.error) throw new Error(res.error.message);
+    return res.data || [];
+  }
+
+  // ---------- 欄位轉換：資料庫的 snake_case → 前端一路在用的 camelCase ----------
+  function mapWish(r){ return { wishId: r.wish_id, timestamp: r.created_at, userId: r.user_id, displayName: r.display_name, topic: r.topic, status: r.status, claims: [] }; }
+  function mapClaim(r){ return { userId: r.user_id, displayName: r.display_name, claimedDate: r.claimed_at, completed: r.completed, completedDate: r.completed_at || '', feedback: r.feedback || '', link: r.link || '' }; }
+  function mapTopicProposal(r){ return { timestamp: r.created_at, userId: r.user_id, displayName: r.display_name, month: r.month, proposedTopic: r.proposed_topic, selected: r.selected }; }
+  function mapTopic(r){ return { month: r.month, topic: r.topic, selectionMethod: r.selection_method, timestamp: r.created_at }; }
+  function mapHomework(r){ return { timestamp: r.created_at, userId: r.user_id, displayName: r.display_name, month: r.month, content: r.content, posted: r.posted, link: r.link || '' }; }
+  function mapCase(r){ return { timestamp: r.created_at, userId: r.user_id, displayName: r.display_name, content: r.content, status: r.status, selected: r.selected, link: r.link || '' }; }
+  function mapShowcase(r){ return { id: r.id, timestamp: r.created_at, userId: r.user_id, displayName: r.display_name, title: r.title, desc: r.description || '', link: r.link || '' }; }
+  function mapStamp(r){ return { userId: r.user_id, displayName: r.display_name, totalStamps: r.total_stamps, updatedAt: r.updated_at }; }
+  function mapLike(r){ return { targetType: r.target_type, targetId: r.target_id, userId: r.user_id, timestamp: r.created_at }; }
+  function mapUser(r){ return { userId: r.user_id, displayName: r.display_name, role: r.role, createdAt: r.created_at }; }
+
+  async function apiGet(action){
+    if(action !== 'getAll') throw new Error('未知的 action: ' + action);
+
+    var results = await Promise.all([
+      sbSelect('wishes', 'created_at'),
+      sbSelect('wish_claims', 'claimed_at'),
+      sbSelect('topic_proposals', 'created_at'),
+      sbSelect('topics', 'id'),
+      sbSelect('homework', 'created_at'),
+      sbSelect('cases', 'created_at'),
+      sbSelect('showcase', 'created_at'),
+      sbSelect('stamps', 'updated_at'),
+      sbSelect('likes', 'created_at'),
+      sbSelect('public_users', 'created_at')
+    ]);
+    var wishRows = results[0], claimRows = results[1], proposalRows = results[2], topicRows = results[3],
+        homeworkRows = results[4], caseRows = results[5], showcaseRows = results[6], stampRows = results[7],
+        likeRows = results[8], userRows = results[9];
+
+    var wishes = wishRows.map(mapWish);
+    var wishById = {};
+    wishes.forEach(function(w){ wishById[w.wishId] = w; });
+    claimRows.forEach(function(r){ var w = wishById[r.wish_id]; if(w) w.claims.push(mapClaim(r)); });
+
+    var topics = topicRows.map(mapTopic);
+
+    return {
+      wishes: wishes,
+      topicProposals: proposalRows.map(mapTopicProposal),
+      topics: topics,
+      currentTopic: topics.length ? topics[topics.length - 1] : null,
+      homeworks: homeworkRows.map(mapHomework),
+      cases: caseRows.map(mapCase),
+      showcase: showcaseRows.map(mapShowcase),
+      stamps: stampRows.map(mapStamp),
+      likes: likeRows.map(mapLike),
+      users: userRows.map(mapUser)
+    };
+  }
+
   async function apiPost(action, payload){
-    var body = Object.assign({ action: action }, payload || {});
-    var json = await fetchJson(API_URL, { method: 'POST', body: JSON.stringify(body), cache: 'no-store' });
-    if(json.error) throw new Error(json.error);
-    return json.data;
-  }
-  // 加上 cache:'no-store' + 時間戳記亂數（_）避免瀏覽器把 GET 請求的回應快取住，
-  // 否則同一組網址（?action=getAll）重複打，瀏覽器可能直接吐舊的回應，畫面時間/資料就會卡在舊的
-  async function apiGet(action, params){
-    var qs = new URLSearchParams(Object.assign({ action: action }, params || {}, { _: Date.now() })).toString();
-    var json = await fetchJson(API_URL + '?' + qs, { cache: 'no-store' });
-    if(json.error) throw new Error(json.error);
-    return json;
+    payload = payload || {};
+    switch(action){
+      case 'register': {
+        var rows = await sbRpc('register_user', { p_email: payload.email, p_password: payload.password, p_display_name: payload.displayName });
+        var r = rows[0];
+        return { userId: r.user_id, displayName: r.display_name, lineId: '', role: r.role };
+      }
+      case 'login': {
+        var rows = await sbRpc('login_user', { p_email: payload.email, p_password: payload.password });
+        var r = rows[0];
+        return { userId: r.user_id, displayName: r.display_name, lineId: r.line_id || '', role: r.role };
+      }
+      case 'updateProfile': {
+        var rows = await sbRpc('update_profile', { p_user_id: payload.userId, p_display_name: payload.displayName, p_line_id: payload.lineId });
+        var r = rows[0];
+        return { userId: r.user_id, displayName: r.display_name, lineId: r.line_id || '', role: r.role };
+      }
+      case 'changePassword': {
+        await sbRpc('change_password', { p_user_id: payload.userId, p_old_password: payload.oldPassword, p_new_password: payload.newPassword });
+        return { changed: true };
+      }
+      case 'forgotPassword': {
+        // 尚未串接寄信服務（Phase 7 再處理），先給清楚的提示，不讓畫面壞掉
+        throw new Error('忘記密碼功能尚未開放，請先請管理員協助重設密碼');
+      }
+      case 'addWish': {
+        var rows = await sbRpc('add_wish', { p_user_id: payload.userId, p_display_name: payload.displayName, p_topic: payload.topic });
+        var r = rows[0];
+        var wish = { wishId: r.wish_id, timestamp: r.created_at, userId: r.user_id, displayName: r.display_name, topic: r.topic, claims: [], status: r.status };
+        return { wishId: r.wish_id, wish: wish };
+      }
+      case 'claimWish': {
+        var rows = await sbRpc('claim_wish', { p_wish_id: payload.wishId, p_user_id: payload.userId, p_display_name: payload.displayName });
+        var claimRows = await sbSelect('wish_claims', 'claimed_at');
+        var claims = claimRows.filter(function(c){ return c.wish_id === payload.wishId; }).map(mapClaim);
+        return { wishId: rows[0].wish_id, claims: claims, status: rows[0].status };
+      }
+      case 'completeWish': {
+        await sbRpc('complete_wish', { p_wish_id: payload.wishId, p_user_id: payload.userId, p_feedback: payload.feedback || '', p_link: payload.link || '' });
+        var claimRows = await sbSelect('wish_claims', 'claimed_at');
+        var claims = claimRows.filter(function(c){ return c.wish_id === payload.wishId; }).map(mapClaim);
+        var stampRows = await sbSelect('stamps');
+        var stampsRow = stampRows.filter(function(s){ return s.user_id === payload.userId; }).map(mapStamp)[0];
+        return { wishId: payload.wishId, claims: claims, stampsRow: stampsRow };
+      }
+      case 'addTopicProposal': {
+        var rows = await sbRpc('add_topic_proposal', { p_user_id: payload.userId, p_display_name: payload.displayName, p_month: payload.month, p_proposed_topic: payload.proposedTopic });
+        var r = rows[0];
+        return { timestamp: r.created_at, userId: payload.userId, displayName: payload.displayName, month: r.month, proposedTopic: r.proposed_topic, selected: false };
+      }
+      case 'setTopic': {
+        var rows = await sbRpc('set_topic', { p_user_id: payload.userId, p_month: payload.month, p_topic: payload.topic, p_selection_method: payload.selectionMethod || '管理員決選' });
+        var r = rows[0];
+        return { month: r.month, topic: r.topic, selectionMethod: payload.selectionMethod || '管理員決選', timestamp: new Date().toISOString() };
+      }
+      case 'addHomework': {
+        var rows = await sbRpc('add_homework', { p_user_id: payload.userId, p_display_name: payload.displayName, p_month: payload.month, p_content: payload.content, p_link: payload.link || '' });
+        var r = rows[0];
+        var homework = { timestamp: new Date().toISOString(), userId: payload.userId, displayName: payload.displayName, month: r.month, content: r.content, posted: true, link: r.link || '' };
+        var stampRows = await sbSelect('stamps');
+        var stampsRow = stampRows.filter(function(s){ return s.user_id === payload.userId; }).map(mapStamp)[0];
+        return { homework: homework, stampsRow: stampsRow };
+      }
+      case 'addCase': {
+        var rows = await sbRpc('add_case', { p_user_id: payload.userId, p_display_name: payload.displayName, p_content: payload.content, p_link: payload.link || '' });
+        var r = rows[0];
+        return { timestamp: new Date().toISOString(), userId: payload.userId, displayName: payload.displayName, content: r.content, status: r.status, selected: false, link: payload.link || '' };
+      }
+      case 'addShowcase': {
+        var rows = await sbRpc('add_showcase', { p_user_id: payload.userId, p_display_name: payload.displayName, p_title: payload.title, p_description: payload.desc || '', p_link: payload.link || '' });
+        var r = rows[0];
+        var showcase = { timestamp: new Date().toISOString(), userId: payload.userId, displayName: payload.displayName, title: r.title, desc: r.description || '', link: r.link || '', id: r.id };
+        var stampRows = await sbSelect('stamps');
+        var stampsRow = stampRows.filter(function(s){ return s.user_id === payload.userId; }).map(mapStamp)[0];
+        return { id: r.id, showcase: showcase, stampsRow: stampsRow };
+      }
+      case 'toggleLike': {
+        var rows = await sbRpc('toggle_like', { p_user_id: payload.userId, p_target_type: payload.targetType, p_target_id: payload.targetId });
+        return { liked: rows[0].liked, targetType: payload.targetType, targetId: payload.targetId, userId: payload.userId, timestamp: new Date().toISOString() };
+      }
+      default:
+        throw new Error('未知的 action: ' + action);
+    }
   }
 
   // 右下角小徽章：不管裝置系統時區設定為何，強制用 Asia/Taipei 時區換算出正確台北時間。
