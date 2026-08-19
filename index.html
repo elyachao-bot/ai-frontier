@@ -736,7 +736,10 @@
       case 'addCase': {
         var rows = await sbRpc('add_case', { p_user_id: payload.userId, p_display_name: payload.displayName, p_content: payload.content, p_link: payload.link || '' });
         var r = rows[0];
-        return { timestamp: new Date().toISOString(), userId: payload.userId, displayName: payload.displayName, content: r.content, status: r.status, selected: false, link: payload.link || '' };
+        var caseRow = { timestamp: new Date().toISOString(), userId: payload.userId, displayName: payload.displayName, content: r.content, status: r.status, selected: false, link: payload.link || '' };
+        var stampRows = await sbSelect('stamps');
+        var stampsRow = stampRows.filter(function(s){ return s.user_id === payload.userId; }).map(mapStamp)[0];
+        return { case: caseRow, stampsRow: stampsRow };
       }
       case 'addShowcase': {
         var rows = await sbRpc('add_showcase', { p_user_id: payload.userId, p_display_name: payload.displayName, p_title: payload.title, p_description: payload.desc || '', p_link: payload.link || '' });
@@ -1238,7 +1241,7 @@
       events.push({ ts: parseTs(h.timestamp), icon: '▤', text: '<b>'+esc(nameFor(h.userId, h.displayName))+'</b> 回報作業「'+esc(h.content)+'」+1 印章' });
     });
     data.cases.forEach(function(c){
-      events.push({ ts: parseTs(c.timestamp), icon: '◈', text: '<b>'+esc(nameFor(c.userId, c.displayName))+'</b> 分享案例「'+esc(c.content)+'」' });
+      events.push({ ts: parseTs(c.timestamp), icon: '◈', text: '<b>'+esc(nameFor(c.userId, c.displayName))+'</b> 分享案例「'+esc(c.content)+'」+1 印章' });
     });
     data.showcase.forEach(function(s){
       events.push({ ts: parseTs(s.timestamp), icon: '❖', text: '<b>'+esc(nameFor(s.userId, s.displayName))+'</b> 上架作品「'+esc(s.title)+'」+1 印章' });
@@ -1325,7 +1328,8 @@
     this.disabled = true;
     try{
       var result = await apiPost('addCase', { userId: currentUser.userId, displayName: currentUser.displayName, content: v, link: link });
-      data.cases.push(result);
+      data.cases.push(result.case);
+      upsertStampsRow(result.stampsRow);
       input.value = ''; linkInput.value = '';
       renderAll();
     }catch(e){ err.textContent = e.message; err.style.display = 'block'; }
