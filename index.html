@@ -85,7 +85,21 @@
   }
   header.hero p.sub{color:var(--text-mid);margin:0 0 20px;font-size:16px;}
 
-  .id-row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;}
+  .hero-topbar{
+    display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;
+    position:relative;z-index:1;margin:0 0 18px;
+  }
+  .identity-cluster{display:flex;align-items:center;gap:10px;font-size:13px;color:var(--text-mid);}
+  .identity-cluster .greet{display:flex;align-items:center;gap:6px;}
+  .identity-cluster .greet b{color:var(--text-hi);font-weight:600;}
+  .identity-cluster .id-divider{width:1px;height:14px;background:var(--line-strong);}
+  .identity-cluster .logout-link{
+    font-family:var(--font-display);font-weight:600;font-size:13px;color:var(--text-dim);
+    background:none;border:none;cursor:pointer;padding:0;
+  }
+  .identity-cluster .logout-link:hover{color:var(--pink);}
+
+  .stats-row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;position:relative;z-index:1;}
   input[type=text],input[type=password]{
     background:var(--bg-panel-2);
     border:1px solid var(--line-strong);
@@ -372,9 +386,10 @@
     header.hero p.sub{font-size:13.5px;margin-bottom:16px;}
     .eyebrow{font-size:11px;}
 
-    .id-row{gap:8px;}
-    .id-row > *{flex:1 1 calc(50% - 8px);min-height:40px;}
-    .hud-chip{justify-content:center;padding:9px 10px;font-size:13px;}
+    .hero-topbar{gap:8px;margin-bottom:14px;}
+    .identity-cluster{font-size:12px;}
+    .stats-row{gap:8px;}
+    .stats-row > *{flex:1 1 calc(50% - 8px);justify-content:center;padding:9px 10px;font-size:13px;}
 
     /* Tabs：改成單行橫向滑動，比換行更符合手機瀏覽器慣例，且不會把版面推得很長 */
     .tabs{
@@ -470,12 +485,17 @@
 
   <header class="hero">
     <div class="hero-glow"></div>
-    <p class="eyebrow"><span class="dot"></span>AI FRONTIER · 任務系統啟動中</p>
+    <div class="hero-topbar">
+      <p class="eyebrow"><span class="dot"></span>AI FRONTIER · 任務系統啟動中</p>
+      <div class="identity-cluster">
+        <span class="greet">👋 Hi <b id="greet-name">-</b></span>
+        <span class="id-divider"></span>
+        <button class="logout-link" id="logout-btn">登出</button>
+      </div>
+    </div>
     <h1>AI Frontier ｜ 前沿社</h1>
-    <p class="sub">許願、接任務、交作業、分享案例 — 每一次投稿都在累積你的印章值。</p>
-    <div class="id-row">
-      <div class="hud-chip" style="font-size:15px;">👋 Hi <b id="greet-name" style="color:var(--text-hi);">-</b></div>
-      <button class="mini-btn" id="logout-btn">登出</button>
+    <p class="sub">許願、接任務、交作業、分享案例 — 每一次投稿都在累積印章！</p>
+    <div class="stats-row">
       <div class="hud-chip">我的印章 <b id="my-stamps-chip">0</b></div>
       <div class="hud-chip member-chip">社團成員 <b id="total-people-chip">0</b>
         <div class="member-tooltip" id="member-tooltip"></div>
