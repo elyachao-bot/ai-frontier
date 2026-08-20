@@ -692,8 +692,8 @@
         return { changed: true };
       }
       case 'forgotPassword': {
-        // 尚未串接寄信服務（Phase 7 再處理），先給清楚的提示，不讓畫面壞掉
-        throw new Error('忘記密碼功能尚未開放，請先請管理員協助重設密碼');
+        // 尚未串接寄信服務，先給清楚的提示，不讓畫面壞掉
+        throw new Error('忘記密碼功能開發中，請聯繫管理員 Elya、Kelly');
       }
       case 'addWish': {
         var rows = await sbRpc('add_wish', { p_user_id: payload.userId, p_display_name: payload.displayName, p_topic: payload.topic });
