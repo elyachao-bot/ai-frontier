@@ -566,6 +566,7 @@
           <div>
             <p class="section-label" style="margin-top:0;">本月作業主題 <span id="current-month-label" style="color:var(--text-dim);font-weight:400;"></span></p>
             <p id="current-month-topic" style="font-size:19px;font-weight:700;margin:0;"></p>
+            <p id="current-month-proposed-by" style="font-size:13px;color:var(--cyan);margin:4px 0 0;display:none;"></p>
           </div>
           <button class="mini-btn" id="admin-toggle-btn" style="display:none;">🔒 管理員模式</button>
         </div>
@@ -614,6 +615,9 @@
           <input id="case-link-input" type="text" placeholder="參考連結（選填，網址，例如截圖雲端連結）" style="flex:1;min-width:180px;">
         </div>
         <p class="err-msg" id="case-err">請先輸入名字與內容</p>
+        <div class="compose" style="margin-top:12px;margin-bottom:10px;">
+          <input id="case-search-input" type="text" placeholder="🔍 輸入關鍵字搜尋案例內容或分享者">
+        </div>
         <div id="case-list"></div>
       </div>
 
@@ -734,8 +738,8 @@
   // ---------- 欄位轉換：資料庫的 snake_case → 前端一路在用的 camelCase ----------
   function mapWish(r){ return { wishId: r.wish_id, timestamp: r.created_at, userId: r.user_id, displayName: r.display_name, topic: r.topic, status: r.status, claims: [] }; }
   function mapClaim(r){ return { userId: r.user_id, displayName: r.display_name, claimedDate: r.claimed_at, completed: r.completed, completedDate: r.completed_at || '', feedback: r.feedback || '', link: r.link || '' }; }
-  function mapTopicProposal(r){ return { timestamp: r.created_at, userId: r.user_id, displayName: r.display_name, month: r.month, proposedTopic: r.proposed_topic, selected: r.selected }; }
-  function mapTopic(r){ return { month: r.month, topic: r.topic, selectionMethod: r.selection_method, timestamp: r.created_at }; }
+  function mapTopicProposal(r){ return { id: r.id, timestamp: r.created_at, userId: r.user_id, displayName: r.display_name, month: r.month, proposedTopic: r.proposed_topic, selected: r.selected }; }
+  function mapTopic(r){ return { month: r.month, topic: r.topic, selectionMethod: r.selection_method, timestamp: r.created_at, proposedByUserId: r.proposed_by_user_id || '', proposedByDisplayName: r.proposed_by_display_name || '' }; }
   function mapHomework(r){ return { timestamp: r.created_at, userId: r.user_id, displayName: r.display_name, month: r.month, content: r.content, posted: r.posted, link: r.link || '' }; }
   function mapCase(r){ return { timestamp: r.created_at, userId: r.user_id, displayName: r.display_name, content: r.content, status: r.status, selected: r.selected, link: r.link || '' }; }
   function mapShowcase(r){ return { id: r.id, timestamp: r.created_at, userId: r.user_id, displayName: r.display_name, title: r.title, desc: r.description || '', link: r.link || '' }; }
@@ -862,7 +866,16 @@
       case 'setTopic': {
         var rows = await sbRpc('set_topic', { p_user_id: payload.userId, p_month: payload.month, p_topic: payload.topic, p_selection_method: payload.selectionMethod || '管理員決選' });
         var r = rows[0];
-        return { month: r.month, topic: r.topic, selectionMethod: payload.selectionMethod || '管理員決選', timestamp: new Date().toISOString() };
+        return { month: r.month, topic: r.topic, selectionMethod: payload.selectionMethod || '管理員決選', timestamp: new Date().toISOString(), proposedByUserId: '', proposedByDisplayName: '' };
+      }
+      case 'selectTopicProposal': {
+        var rows = await sbRpc('select_topic_proposal', { p_proposal_id: payload.proposalId, p_admin_user_id: payload.userId });
+        var r = rows[0];
+        return { month: r.month, topic: r.topic, selectionMethod: r.selection_method, timestamp: r.created_at, proposedByUserId: r.proposed_by_user_id || '', proposedByDisplayName: r.proposed_by_display_name || '' };
+      }
+      case 'deleteTopicProposal': {
+        await sbRpc('delete_topic_proposal', { p_proposal_id: payload.proposalId, p_admin_user_id: payload.userId });
+        return { deleted: true };
       }
       case 'addHomework': {
         var rows = await sbRpc('add_homework', { p_user_id: payload.userId, p_display_name: payload.displayName, p_month: payload.month, p_content: payload.content, p_link: payload.link || '' });
@@ -1184,9 +1197,47 @@
     var box = document.getElementById('theme-list');
     var arr = data.topicProposals;
     if(arr.length === 0){ box.innerHTML = '<p class="empty">還沒有主題候選。</p>'; return; }
+    var adminMode = currentUser && currentUser.role === 'admin'
+      && document.getElementById('admin-panel').style.display === 'block';
     box.innerHTML = arr.slice().reverse().map(function(t){
-      return '<div class="quest-card tone-cyan"><div class="quest-body">'+esc(t.proposedTopic)+'</div><div class="quest-meta"><span class="author">'+esc(nameFor(t.userId, t.displayName))+'</span><span>'+fmtTime(t.timestamp)+'</span></div></div>';
+      var selectedBadge = t.selected ? ' <span style="color:var(--cyan);font-size:12px;">💡 已雀屏中選</span>' : '';
+      var adminBtns = adminMode
+        ? '<div style="display:flex;gap:6px;margin-top:8px;">'
+          + '<button class="mini-btn primary-mini" data-select-proposal="'+t.id+'">選這個</button>'
+          + '<button class="mini-btn danger-btn" data-delete-proposal="'+t.id+'">刪除</button>'
+          + '</div>'
+        : '';
+      return '<div class="quest-card tone-cyan"><div class="quest-body">'+esc(t.proposedTopic)+selectedBadge+'</div><div class="quest-meta"><span class="author">'+esc(nameFor(t.userId, t.displayName))+'</span><span>'+fmtTime(t.timestamp)+'</span></div>'+adminBtns+'</div>';
     }).join('');
+
+    if(adminMode){
+      box.querySelectorAll('[data-select-proposal]').forEach(function(btn){
+        btn.onclick = async function(){
+          var id = this.getAttribute('data-select-proposal');
+          this.disabled = true;
+          try{
+            var result = await apiPost('selectTopicProposal', { proposalId: id, userId: currentUser.userId });
+            data.topics.push(result);
+            data.currentTopic = result;
+            var p = data.topicProposals.find(function(p){ return String(p.id) === String(id); });
+            if(p) p.selected = true;
+            renderAll();
+          }catch(e){ alert(e.message); this.disabled = false; }
+        };
+      });
+      box.querySelectorAll('[data-delete-proposal]').forEach(function(btn){
+        btn.onclick = async function(){
+          var id = this.getAttribute('data-delete-proposal');
+          if(!confirm('確定要刪除這個候選主題嗎？（不影響已公告的主題）')) return;
+          this.disabled = true;
+          try{
+            await apiPost('deleteTopicProposal', { proposalId: id, userId: currentUser.userId });
+            data.topicProposals = data.topicProposals.filter(function(p){ return String(p.id) !== String(id); });
+            renderAll();
+          }catch(e){ alert(e.message); this.disabled = false; }
+        };
+      });
+    }
   }
 
   function renderHomeworks(){
@@ -1207,10 +1258,18 @@
       topicEl.textContent = data.currentTopic.topic;
       topicEl.style.color = 'var(--text-hi)';
       labelEl.textContent = '（'+data.currentTopic.month+'）';
+      var proposedEl = document.getElementById('current-month-proposed-by');
+      if(data.currentTopic.proposedByDisplayName){
+        proposedEl.textContent = '💡 由 ' + data.currentTopic.proposedByDisplayName + ' 投稿雀屏中選';
+        proposedEl.style.display = 'block';
+      } else {
+        proposedEl.style.display = 'none';
+      }
     } else {
       topicEl.textContent = '（尚未設定本月主題）';
       topicEl.style.color = 'var(--text-dim)';
       labelEl.textContent = '';
+      document.getElementById('current-month-proposed-by').style.display = 'none';
     }
     renderAdminPanel();
   }
@@ -1246,8 +1305,16 @@
   /* ---------- 實戰案例 ---------- */
   function renderCases(){
     var box = document.getElementById('case-list');
+    var kw = (document.getElementById('case-search-input').value || '').trim().toLowerCase();
     var arr = data.cases;
-    if(arr.length === 0){ box.innerHTML = '<p class="empty">還沒有實戰案例分享。</p>'; return; }
+    if(kw){
+      arr = arr.filter(function(c){
+        var content = (c.content || '').toLowerCase();
+        var author = nameFor(c.userId, c.displayName).toLowerCase();
+        return content.indexOf(kw) !== -1 || author.indexOf(kw) !== -1;
+      });
+    }
+    if(arr.length === 0){ box.innerHTML = '<p class="empty">'+(kw ? '沒有符合「'+esc(kw)+'」的案例。' : '還沒有實戰案例分享。')+'</p>'; return; }
     box.innerHTML = arr.slice().reverse().map(function(c){
       var extra = c.link ? '<div><a class="attach-link" href="'+esc(c.link)+'" target="_blank" rel="noopener">'+esc(c.link)+'</a></div>' : '';
       return '<div class="quest-card tone-pink"><div class="quest-body">'+esc(c.content)+'</div>'+extra+'<div class="quest-meta"><span class="author">'+esc(nameFor(c.userId, c.displayName))+'</span><span>'+fmtTime(c.timestamp)+'</span></div></div>';
@@ -1466,6 +1533,7 @@
     var box = document.getElementById('admin-panel');
     box.style.display = (box.style.display === 'none' || !box.style.display) ? 'block' : 'none';
     renderAdminPanel();
+    renderThemes();
   };
 
   document.getElementById('wish-add').onclick = async function(){
@@ -1542,6 +1610,8 @@
     }catch(e){ err.textContent = e.message; err.style.display = 'block'; }
     this.disabled = false;
   };
+
+  document.getElementById('case-search-input').addEventListener('input', renderCases);
 
   document.getElementById('showcase-add').onclick = async function(){
     if(!currentUser) return;
