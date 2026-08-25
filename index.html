@@ -1424,8 +1424,9 @@
   async function refreshLineBindStatus(){
     if(!currentUser) return;
     try{
-      var lineId = await sbRpc('get_my_line_status', { p_user_id: currentUser.userId });
-      currentUser.lineId = lineId || '';
+      var res = await sb.rpc('get_my_line_status', { p_user_id: currentUser.userId });
+      if(res.error) throw new Error(res.error.message);
+      currentUser.lineId = res.data || '';
       saveSession(currentUser);
     }catch(e){ console.error('查詢 LINE 綁定狀態失敗', e); }
     updateLineBindUI();
