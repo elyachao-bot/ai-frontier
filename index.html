@@ -90,14 +90,37 @@
     position:relative;z-index:1;margin:0 0 18px;
   }
   .identity-cluster{display:flex;align-items:center;gap:10px;font-size:13px;color:var(--text-mid);}
-  .identity-cluster .greet{display:flex;align-items:center;gap:6px;}
-  .identity-cluster .greet b{color:var(--text-hi);font-weight:600;}
+  .identity-cluster .greet{display:flex;align-items:center;gap:8px;font-size:16px;}
+  .identity-cluster .greet b{color:var(--text-hi);font-weight:600;font-size:16px;}
   .identity-cluster .id-divider{width:1px;height:14px;background:var(--line-strong);}
   .identity-cluster .logout-link{
     font-family:var(--font-display);font-weight:600;font-size:13px;color:var(--text-dim);
     background:none;border:none;cursor:pointer;padding:0;
   }
   .identity-cluster .logout-link:hover{color:var(--pink);}
+
+  .avatar-btn{
+    position:relative;flex-shrink:0;width:44px;height:44px;padding:0;
+    border:2px solid var(--line-strong);border-radius:50%;background:var(--bg-panel-2);
+    cursor:pointer;display:flex;align-items:center;justify-content:center;
+  }
+  .avatar-btn:hover{border-color:var(--cyan);}
+  .avatar-btn:focus-visible{border-radius:50%;}
+  .avatar-btn img{width:100%;height:100%;border-radius:50%;display:block;}
+  .avatar-picker{
+    position:absolute;top:calc(100% + 8px);right:0;left:auto;
+    display:none;grid-template-columns:repeat(3,1fr);gap:8px;
+    width:168px;background:var(--bg-panel);border:1px solid var(--line-strong);
+    border-radius:12px;padding:10px;z-index:40;box-shadow:0 12px 28px rgba(0,0,0,0.45);
+  }
+  .avatar-btn.open .avatar-picker{display:grid;}
+  .avatar-picker button{
+    padding:0;width:44px;height:44px;border-radius:50%;border:2px solid transparent;
+    background:var(--bg-panel-2);cursor:pointer;
+  }
+  .avatar-picker button:hover{border-color:var(--line-strong);}
+  .avatar-picker button.selected{border-color:var(--cyan);}
+  .avatar-picker button img{width:100%;height:100%;border-radius:50%;display:block;}
 
   .stats-row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;position:relative;z-index:1;}
   input[type=text],input[type=password]{
@@ -488,7 +511,13 @@
     <div class="hero-topbar">
       <p class="eyebrow"><span class="dot"></span>AI FRONTIER · 任務系統啟動中</p>
       <div class="identity-cluster">
-        <span class="greet">👋 Hi <b id="greet-name">-</b></span>
+        <span class="greet">
+          <button class="avatar-btn" id="avatar-btn" type="button" aria-label="選擇頭像">
+            <img id="user-avatar" src="" alt="">
+            <div class="avatar-picker" id="avatar-picker"></div>
+          </button>
+          Hi <b id="greet-name">-</b>
+        </span>
         <span class="id-divider"></span>
         <button class="logout-link" id="logout-btn">登出</button>
       </div>
@@ -714,6 +743,23 @@
   function mapLike(r){ return { targetType: r.target_type, targetId: r.target_id, userId: r.user_id, timestamp: r.created_at }; }
   function mapUser(r){ return { userId: r.user_id, displayName: r.display_name, role: r.role, createdAt: r.created_at }; }
 
+  // ---------- 頭像（DiceBear clay 風格，只存 seed 字串，不存圖片檔） ----------
+  var AVATAR_SEEDS = ['Nova','Byte','Echo','Pixel','Comet','Orbit'];
+  function avatarUrl(seed){
+    return 'https://api.dicebear.com/10.x/clay/svg?seed=' + encodeURIComponent(seed) + '&backgroundColor=232c44';
+  }
+  function myAvatarSeed(){
+    return (currentUser && currentUser.avatarSeed) || (currentUser ? currentUser.userId : 'guest');
+  }
+  function setAvatarImg(){
+    var seed = myAvatarSeed();
+    var img = document.getElementById('user-avatar');
+    if(img) img.src = avatarUrl(seed);
+    document.querySelectorAll('#avatar-picker button').forEach(function(b){
+      b.classList.toggle('selected', b.dataset.seed === seed);
+    });
+  }
+
   async function apiGet(action){
     if(action !== 'getAll') throw new Error('未知的 action: ' + action);
 
@@ -775,6 +821,14 @@
       case 'changePassword': {
         await sbRpc('change_password', { p_user_id: payload.userId, p_old_password: payload.oldPassword, p_new_password: payload.newPassword });
         return { changed: true };
+      }
+      case 'getAvatar': {
+        var rows = await sbRpc('get_my_avatar', { p_user_id: payload.userId });
+        return { avatarSeed: (rows[0] && rows[0].avatar_seed) || '' };
+      }
+      case 'updateAvatar': {
+        var rows = await sbRpc('update_avatar', { p_user_id: payload.userId, p_avatar_seed: payload.avatarSeed });
+        return { avatarSeed: (rows[0] && rows[0].avatar_seed) || payload.avatarSeed };
       }
       case 'forgotPassword': {
         // 尚未串接寄信服務，先給清楚的提示，不讓畫面壞掉
@@ -870,6 +924,60 @@
       if(!chip.contains(e.target)) chip.classList.remove('open');
     });
   })();
+
+  // 頭像選單：點頭像本身開關，選一個就樂觀更新畫面＋存回 Supabase
+  (function initAvatarPicker(){
+    var btn = document.getElementById('avatar-btn');
+    var picker = document.getElementById('avatar-picker');
+    if(!btn || !picker) return;
+    AVATAR_SEEDS.forEach(function(seed){
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.dataset.seed = seed;
+      b.title = seed;
+      b.innerHTML = '<img src="' + avatarUrl(seed) + '" alt="' + seed + '">';
+      b.onclick = function(e){
+        e.stopPropagation();
+        selectAvatar(seed);
+      };
+      picker.appendChild(b);
+    });
+    btn.addEventListener('click', function(e){
+      e.stopPropagation();
+      btn.classList.toggle('open');
+    });
+    document.addEventListener('click', function(e){
+      if(!btn.contains(e.target)) btn.classList.remove('open');
+    });
+  })();
+
+  async function selectAvatar(seed){
+    document.getElementById('avatar-btn').classList.remove('open');
+    if(!currentUser || seed === myAvatarSeed()) return;
+    var prev = currentUser.avatarSeed;
+    currentUser.avatarSeed = seed;
+    setAvatarImg();
+    saveSession(currentUser);
+    try{
+      await apiPost('updateAvatar', { userId: currentUser.userId, avatarSeed: seed });
+    }catch(e){
+      console.error('更新頭像失敗', e);
+      currentUser.avatarSeed = prev;
+      setAvatarImg();
+      saveSession(currentUser);
+    }
+  }
+
+  async function hydrateAvatar(){
+    try{
+      var res = await apiPost('getAvatar', { userId: currentUser.userId });
+      if(res.avatarSeed){
+        currentUser.avatarSeed = res.avatarSeed;
+        saveSession(currentUser);
+      }
+    }catch(e){ console.error('讀取頭像失敗', e); }
+    setAvatarImg();
+  }
 
   function loadSession(){
     try{ var raw = localStorage.getItem(SESSION_KEY); return raw ? JSON.parse(raw) : null; }catch(e){ return null; }
@@ -1467,6 +1575,8 @@
     document.getElementById('app-screen').style.display = 'block';
     document.getElementById('greet-name').textContent = currentUser.displayName;
     document.getElementById('admin-toggle-btn').style.display = (currentUser.role === 'admin') ? 'inline-block' : 'none';
+    setAvatarImg();
+    hydrateAvatar();
     refreshData();
     // 註：個人操作已經是樂觀更新不用等 refreshData；曾經加過背景輪詢自動同步別人新貼的內容，
     // 但為了先求穩定、減少對後端的額外負擔先拿掉了，之後想看到別人的新內容手動重整頁面即可
