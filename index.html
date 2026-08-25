@@ -648,7 +648,6 @@
           <p style="font-size:13px;color:var(--text-mid);margin:0 0 10px;font-weight:500;">修改名稱</p>
           <div class="admin-row">
             <input type="text" id="profile-name-input" placeholder="顯示名稱">
-            <input type="text" id="profile-lineid-input" placeholder="LINE ID（選填，方便之後跟機器人資料合併）">
           </div>
           <button class="mini-btn primary-mini" id="profile-save-btn">儲存</button>
           <p class="err-msg" id="profile-err"></p>
@@ -666,6 +665,23 @@
           <button class="mini-btn primary-mini" id="profile-pw-save-btn">修改密碼</button>
           <p class="err-msg" id="profile-pw-err"></p>
           <p id="profile-pw-success" style="font-size:13px;color:var(--cyan);margin:10px 0 0;display:none;">密碼已更新，下次登入請用新密碼。</p>
+        </div>
+
+        <div class="admin-box" style="margin-bottom:16px;">
+          <p style="font-size:13px;color:var(--text-mid);margin:0 0 10px;font-weight:500;">LINE 帳號綁定</p>
+          <div id="line-bind-unbound">
+            <p style="font-size:13px;color:var(--text-dim);margin:0 0 10px;">綁定後可以在 LINE 群組使用許願、投稿主題、查詢印章等功能。</p>
+            <button class="mini-btn primary-mini" id="line-bind-generate-btn">產生綁定驗證碼</button>
+            <div id="line-bind-code-box" style="display:none;margin-top:12px;padding:12px;border:1px dashed var(--line-strong);border-radius:10px;background:rgba(62,238,208,0.05);">
+              <p style="font-size:13px;color:var(--text-mid);margin:0 0 6px;">請到 LINE 群組輸入：</p>
+              <p style="font-family:var(--font-display);font-weight:700;font-size:22px;color:var(--cyan);margin:0 0 6px;letter-spacing:0.05em;" id="line-bind-code-text"></p>
+              <p style="font-size:12px;color:var(--text-dim);margin:0;">10 分鐘內有效，過期請重新產生。</p>
+            </div>
+            <p class="err-msg" id="line-bind-err"></p>
+          </div>
+          <div id="line-bind-bound" style="display:none;">
+            <p style="font-size:14px;color:var(--cyan);margin:0;">✓ LINE 帳號已綁定</p>
+          </div>
         </div>
 
         <div class="stat-row" style="grid-template-columns:repeat(auto-fit,minmax(110px,1fr));">
@@ -1396,14 +1412,32 @@
   }
 
   /* ---------- 我的戰情室 ---------- */
+  function updateLineBindUI(){
+    var unboundBox = document.getElementById('line-bind-unbound');
+    var boundBox = document.getElementById('line-bind-bound');
+    if(!unboundBox || !boundBox) return;
+    var bound = !!(currentUser && currentUser.lineId);
+    unboundBox.style.display = bound ? 'none' : 'block';
+    boundBox.style.display = bound ? 'block' : 'none';
+  }
+
+  async function refreshLineBindStatus(){
+    if(!currentUser) return;
+    try{
+      var lineId = await sbRpc('get_my_line_status', { p_user_id: currentUser.userId });
+      currentUser.lineId = lineId || '';
+      saveSession(currentUser);
+    }catch(e){ console.error('查詢 LINE 綁定狀態失敗', e); }
+    updateLineBindUI();
+  }
+
   function renderMyOps(){
     var activeBox = document.getElementById('myops-active-list');
     var authoredBox = document.getElementById('myops-authored-list');
     var postsBox = document.getElementById('myops-posts-list');
     var nameInput = document.getElementById('profile-name-input');
-    var lineIdInput = document.getElementById('profile-lineid-input');
     if(currentUser && document.activeElement !== nameInput) nameInput.value = currentUser.displayName || '';
-    if(currentUser && document.activeElement !== lineIdInput) lineIdInput.value = currentUser.lineId || '';
+    updateLineBindUI();
 
     if(!currentUser){
       activeBox.innerHTML = '<p class="empty">請先登入。</p>';
@@ -1635,6 +1669,21 @@
     this.disabled = false;
   };
 
+  document.getElementById('line-bind-generate-btn').onclick = async function(){
+    var err = document.getElementById('line-bind-err');
+    err.style.display = 'none';
+    this.disabled = true; this.textContent = '產生中...';
+    try{
+      var code = await sbRpc('generate_line_bind_code', { p_user_id: currentUser.userId });
+      document.getElementById('line-bind-code-text').textContent = code;
+      document.getElementById('line-bind-code-box').style.display = 'block';
+    }catch(e){
+      err.textContent = e.message;
+      err.style.display = 'block';
+    }
+    this.disabled = false; this.textContent = '產生綁定驗證碼';
+  };
+
   /* ---------- 帳號系統 ---------- */
   function showAuthScreen(){
     document.getElementById('auth-screen').style.display = 'block';
@@ -1648,6 +1697,7 @@
     setAvatarImg();
     hydrateAvatar();
     refreshData();
+    refreshLineBindStatus();
     // 註：個人操作已經是樂觀更新不用等 refreshData；曾經加過背景輪詢自動同步別人新貼的內容，
     // 但為了先求穩定、減少對後端的額外負擔先拿掉了，之後想看到別人的新內容手動重整頁面即可
   }
@@ -1738,13 +1788,12 @@
 
   document.getElementById('profile-save-btn').onclick = async function(){
     var newName = document.getElementById('profile-name-input').value.trim();
-    var newLineId = document.getElementById('profile-lineid-input').value.trim();
     var err = document.getElementById('profile-err');
     err.style.display = 'none';
     if(!newName){ err.textContent = '名稱不能是空的'; err.style.display = 'block'; return; }
     this.disabled = true; this.textContent = '儲存中...';
     try{
-      var updated = await apiPost('updateProfile', { userId: currentUser.userId, displayName: newName, lineId: newLineId });
+      var updated = await apiPost('updateProfile', { userId: currentUser.userId, displayName: newName, lineId: currentUser.lineId || '' });
       currentUser.displayName = updated.displayName;
       currentUser.lineId = updated.lineId;
       saveSession(currentUser);
