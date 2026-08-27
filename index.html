@@ -851,8 +851,15 @@
         return { avatarSeed: (rows[0] && rows[0].avatar_seed) || payload.avatarSeed };
       }
       case 'forgotPassword': {
-        // 尚未串接寄信服務，先給清楚的提示，不讓畫面壞掉
-        throw new Error('忘記密碼功能開發中，請聯繫管理員 Elya、Kelly');
+        try{
+          await sbRpc('request_password_reset', { p_email: payload.email });
+        }catch(rpcErr){
+          if(String(rpcErr.message || rpcErr).indexOf('EMAIL_NOT_FOUND') !== -1){
+            throw new Error('查無此 email，請確認輸入是否正確。');
+          }
+          throw rpcErr;
+        }
+        return { requested: true };
       }
       case 'addWish': {
         var rows = await sbRpc('add_wish', { p_user_id: payload.userId, p_display_name: payload.displayName, p_topic: payload.topic });
