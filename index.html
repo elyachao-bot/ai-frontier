@@ -221,6 +221,7 @@
   .quest-card.tone-pink{border-left-color:var(--pink);}
   .quest-card.tone-green{border-left-color:var(--green);}
   .quest-body{font-size:15px;color:var(--text-hi);margin-bottom:8px;word-break:break-word;}
+  .quest-body-scroll{max-height:160px;overflow-y:auto;padding-right:4px;}
   .quest-meta{display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:13px;color:var(--text-dim);}
   .quest-meta .author{color:var(--text-mid);font-weight:500;}
   .claimer-tags{display:flex;gap:6px;flex-wrap:wrap;}
@@ -263,6 +264,7 @@
   .feed-panel{padding:16px;}
   .feed-panel .panel-title{margin-bottom:10px;font-size:15px;}
   #feed{max-height:420px;overflow-y:auto;}
+  #theme-list{max-height:420px;overflow-y:auto;padding-right:4px;}
   .feed-item{display:flex;gap:8px;padding:7px 0;border-bottom:1px solid var(--line);}
   .feed-item:last-child{border-bottom:none;}
   .feed-icon{
@@ -1259,7 +1261,11 @@
     if(arr.length === 0){ box.innerHTML = '<p class="empty">還沒有主題候選。</p>'; return; }
     var adminMode = currentUser && currentUser.role === 'admin'
       && document.getElementById('admin-panel').style.display === 'block';
-    box.innerHTML = arr.slice().reverse().map(function(t){
+    // 未雀屏中選的排前面（新到舊），已雀屏中選的排到最下面，方便瀏覽還在候選中的主題
+    var notSelected = arr.filter(function(t){ return !t.selected; }).slice().reverse();
+    var selected = arr.filter(function(t){ return t.selected; }).slice().reverse();
+    var sortedArr = notSelected.concat(selected);
+    box.innerHTML = sortedArr.map(function(t){
       var selectedBadge = t.selected ? ' <span style="color:var(--cyan);font-size:12px;">💡 已雀屏中選</span>' : '';
       var adminBtns = adminMode
         ? '<div style="display:flex;gap:6px;margin-top:8px;">'
@@ -1377,7 +1383,7 @@
     if(arr.length === 0){ box.innerHTML = '<p class="empty">'+(kw ? '沒有符合「'+esc(kw)+'」的案例。' : '還沒有實戰案例分享。')+'</p>'; return; }
     box.innerHTML = arr.slice().reverse().map(function(c){
       var extra = c.link ? '<div><a class="attach-link" href="'+esc(c.link)+'" target="_blank" rel="noopener">'+esc(c.link)+'</a></div>' : '';
-      return '<div class="quest-card tone-pink"><div class="quest-body">'+esc(c.content)+'</div>'+extra+'<div class="quest-meta"><span class="author">'+esc(nameFor(c.userId, c.displayName))+'</span><span>'+fmtTime(c.timestamp)+'</span></div></div>';
+      return '<div class="quest-card tone-pink"><div class="quest-body quest-body-scroll">'+esc(c.content)+'</div>'+extra+'<div class="quest-meta"><span class="author">'+esc(nameFor(c.userId, c.displayName))+'</span><span>'+fmtTime(c.timestamp)+'</span></div></div>';
     }).join('');
   }
 
@@ -1436,7 +1442,7 @@
         var likeBtn = '<button class="like-btn'+(liked?' liked':'')+'" data-like-id="'+esc(s.id)+'">'+(liked?'❤️':'🤍')+' <span>'+count+'</span></button>';
         return '<div class="showcase-card"><span class="showcase-tag">'+(tagLabel[s.tag]||'作品')+'</span><p class="showcase-title">'+esc(s.title)+'</p><p class="showcase-desc">'+esc(s.desc)+'</p>'+linkHtml+'<div class="showcase-meta">'+esc(s.author)+' · '+fmtTime(s.ts)+'</div>'+likeBtn+'</div>';
       }).join('');
-      return '<details class="showcase-folder" open><summary>📁 '+esc(g)+' <span class="folder-count">'+list.length+'</span></summary><div class="showcase-grid">'+cards+'</div></details>';
+      return '<details class="showcase-folder"><summary>📁 '+esc(g)+' <span class="folder-count">'+list.length+'</span></summary><div class="showcase-grid">'+cards+'</div></details>';
     }).join('');
 
     box.querySelectorAll('.like-btn').forEach(function(btn){
