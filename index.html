@@ -1246,6 +1246,7 @@
           if(w) w.claims = result.claims;
           upsertStampsRow(result.stampsRow);
           renderAll();
+          refreshQuarterlyBoard();
         }catch(e){ alert(e.message); btn.disabled = false; }
       };
     });
@@ -1672,6 +1673,7 @@
       upsertStampsRow(result.stampsRow);
       input.value = ''; linkInput.value = '';
       renderAll();
+      refreshQuarterlyBoard();
     }catch(e){ err.textContent = e.message; err.style.display = 'block'; }
     this.disabled = false;
   };
@@ -1692,6 +1694,7 @@
       upsertStampsRow(result.stampsRow);
       input.value = ''; linkInput.value = '';
       renderAll();
+      refreshQuarterlyBoard();
     }catch(e){ err.textContent = e.message; err.style.display = 'block'; }
     this.disabled = false;
   };
@@ -1716,6 +1719,7 @@
       upsertStampsRow(result.stampsRow);
       titleInput.value=''; descInput.value=''; linkInput.value='';
       renderAll();
+      refreshQuarterlyBoard();
     }catch(e){ err.textContent = e.message; err.style.display = 'block'; }
     this.disabled = false;
   };
