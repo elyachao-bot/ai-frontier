@@ -966,6 +966,16 @@
         await sbRpc('delete_showcase', { p_id: payload.id, p_user_id: payload.userId });
         return { deleted: true, id: payload.id };
       }
+      case 'deleteWishFeedback': {
+        var rows = await sbRpc('delete_wish_feedback', { p_wish_id: payload.wishId, p_user_id: payload.userId });
+        var r = rows[0];
+        return { wishId: r.wish_id, status: r.status };
+      }
+      case 'updateWishFeedback': {
+        var rows = await sbRpc('update_wish_feedback', { p_wish_id: payload.wishId, p_user_id: payload.userId, p_feedback: payload.feedback, p_link: payload.link || '' });
+        var r = rows[0];
+        return { wishId: r.wish_id, feedback: r.feedback, link: r.link || '' };
+      }
       case 'toggleLike': {
         var rows = await sbRpc('toggle_like', { p_user_id: payload.userId, p_target_type: payload.targetType, p_target_id: payload.targetId });
         return { liked: rows[0].liked, targetType: payload.targetType, targetId: payload.targetId, userId: payload.userId, timestamp: new Date().toISOString() };
@@ -1109,6 +1119,16 @@
 
   // 修改／刪除／取消按鈕的事件綁定，renderCases/renderHomeworks/renderShowcase 各自產生 HTML 後都呼叫這支
   function bindOwnerActionEvents_(){
+    document.querySelectorAll('[data-delete-feedback-wish]').forEach(function(btn){
+      btn.onclick = async function(){
+        if(!currentUser) return;
+        if(!confirm('確定要刪除這則回饋嗎？許願會變回未認領，印章會一併收回。')) return;
+        btn.disabled = true;
+        try{
+          await deleteWishFeedback_(btn.dataset.deleteFeedbackWish);
+        }catch(e){ alert(e.message); btn.disabled = false; }
+      };
+    });
     document.querySelectorAll('[data-edit-type]').forEach(function(btn){
       btn.onclick = function(){
         editingItem = { type: btn.dataset.editType, id: btn.dataset.editId };
@@ -1151,6 +1171,11 @@
           errEl.style.display = 'block';
           return;
         }
+        if(btn.dataset.saveType === 'feedback' && !desc){
+          errEl.textContent = '回饋內容不能是空的';
+          errEl.style.display = 'block';
+          return;
+        }
         btn.disabled = true;
         try{
           await saveOwnerItem_(btn.dataset.saveType, btn.dataset.saveId, { content: content, title: title, desc: desc, link: link });
@@ -1176,9 +1201,33 @@
       var r3 = await apiPost('updateShowcase', { id: id, userId: currentUser.userId, title: fields.title, desc: fields.desc, link: fields.link });
       var s = data.showcase.find(function(s){ return String(s.id) === String(id); });
       if(s){ s.title = r3.title; s.desc = r3.desc; s.link = r3.link; }
+    } else if(type === 'feedback'){
+      var parts = String(id).split('::');
+      var r4 = await apiPost('updateWishFeedback', { wishId: parts[0], userId: parts[1], feedback: fields.desc, link: fields.link });
+      var w2 = data.wishes.find(function(w){ return w.wishId === r4.wishId; });
+      if(w2){
+        var c2 = w2.claims.find(function(c){ return c.userId === parts[1]; });
+        if(c2){ c2.feedback = r4.feedback; c2.link = r4.link; }
+      }
     }
     editingItem = null;
     renderAll();
+  }
+
+  async function deleteWishFeedback_(wishId){
+    var result = await apiPost('deleteWishFeedback', { wishId: wishId, userId: currentUser.userId });
+    var w = data.wishes.find(function(w){ return w.wishId === result.wishId; });
+    if(w){
+      w.claims = w.claims.filter(function(c){ return c.userId !== currentUser.userId; });
+      w.status = result.status;
+    }
+    try{
+      var stampRows = await sbSelect('stamps');
+      var mine = stampRows.filter(function(s){ return s.user_id === currentUser.userId; }).map(mapStamp)[0];
+      upsertStampsRow(mine);
+    }catch(e){ console.error('刪除回饋後重讀印章總數失敗', e); }
+    renderAll();
+    refreshQuarterlyBoard();
   }
 
   async function deleteOwnerItem_(type, id){
@@ -1610,7 +1659,7 @@
     data.wishes.forEach(function(w){
       (w.claims || []).forEach(function(c){
         if(c.completed && c.feedback){
-          items.push({ id: 'fb-'+w.wishId+'-'+c.userId, ownerId: null, ownerType: null, userId: c.userId, tag: 'feedback', title: '回饋：'+w.topic, desc: c.feedback, link: c.link, author: nameFor(c.userId, c.displayName), ts: parseTs(c.completedDate), groupLabel: w.topic });
+          items.push({ id: 'fb-'+w.wishId+'-'+c.userId, ownerId: null, ownerType: null, wishId: w.wishId, userId: c.userId, tag: 'feedback', title: '回饋：'+w.topic, desc: c.feedback, link: c.link, author: nameFor(c.userId, c.displayName), ts: parseTs(c.completedDate), groupLabel: w.topic });
         }
       });
     });
@@ -1640,6 +1689,9 @@
     box.innerHTML = order.map(function(g){
       var list = groups[g].slice().sort(function(a,b){ return b.ts - a.ts; });
       var cards = list.map(function(s){
+        if(s.tag === 'feedback' && editingItem && editingItem.type === 'feedback' && editingItem.id === (s.wishId+'::'+s.userId)){
+          return buildShowcaseEditCardHtml_('feedback', s.wishId+'::'+s.userId, s.title, s.desc, s.link);
+        }
         if(s.ownerType && editingItem && editingItem.type === s.ownerType && String(editingItem.id) === String(s.ownerId)){
           return buildShowcaseEditCardHtml_(s.ownerType, s.ownerId, s.title, s.desc, s.link);
         }
@@ -1648,6 +1700,12 @@
         var count = likeCount(s.id);
         var likeBtn = '<button class="like-btn'+(liked?' liked':'')+'" data-like-id="'+esc(s.id)+'">'+(liked?'❤️':'🤍')+' <span>'+count+'</span></button>';
         var actions = (s.ownerType && currentUser && s.userId === myUid) ? ownerActionsHtml_(s.ownerType, s.ownerId) : '';
+        if(s.tag === 'feedback' && currentUser && s.userId === myUid){
+          actions = '<div style="display:flex;gap:6px;margin-top:8px;">'
+            + '<button class="mini-btn" data-edit-type="feedback" data-edit-id="'+esc(s.wishId+'::'+s.userId)+'">修改</button>'
+            + '<button class="mini-btn danger-btn" data-delete-feedback-wish="'+esc(s.wishId)+'">刪除</button>'
+            + '</div>';
+        }
         return '<div class="showcase-card"><span class="showcase-tag">'+(tagLabel[s.tag]||'作品')+'</span><p class="showcase-title">'+esc(s.title)+'</p><p class="showcase-desc">'+esc(s.desc)+'</p>'+linkHtml+'<div class="showcase-meta">'+esc(s.author)+' · '+fmtTime(s.ts)+'</div>'+likeBtn+actions+'</div>';
       }).join('');
       var isOpen = !!openShowcaseFolders[g];
