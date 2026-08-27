@@ -185,6 +185,8 @@
 
   .grid-main{display:grid;grid-template-columns:1.3fr 1fr;gap:20px;align-items:start;}
   @media (max-width:840px){.grid-main{grid-template-columns:1fr;}}
+  .homework-grid{display:grid;grid-template-columns:1.3fr 1fr;gap:20px;align-items:start;}
+  @media (max-width:840px){.homework-grid{grid-template-columns:1fr;}}
 
   .panel{
     border:1px solid var(--line);border-radius:14px;background:var(--bg-panel);
@@ -563,45 +565,49 @@
         <p class="panel-title">▤ 每月作業</p>
         <p class="panel-desc">本月主題公告、投稿候選主題、回報並瀏覽本月作業作品集。</p>
 
-        <!-- (3) 本月作業主題 -->
-        <div class="month-banner">
-          <div>
-            <p class="section-label" style="margin-top:0;">本月作業主題 <span id="current-month-label" style="color:var(--text-dim);font-weight:400;"></span></p>
-            <p id="current-month-topic" style="font-size:19px;font-weight:700;margin:0;"></p>
-            <p id="current-month-proposed-by" style="font-size:13px;color:var(--cyan);margin:4px 0 0;display:none;"></p>
-          </div>
-          <button class="mini-btn" id="admin-toggle-btn" style="display:none;">🔒 管理員模式</button>
-        </div>
-        <div id="admin-panel" style="display:none;"></div>
+        <div class="homework-grid">
+          <div class="homework-main">
+            <!-- (3) 本月作業主題 -->
+            <div class="month-banner">
+              <div>
+                <p class="section-label" style="margin-top:0;">本月作業主題 <span id="current-month-label" style="color:var(--text-dim);font-weight:400;"></span></p>
+                <p id="current-month-topic" style="font-size:19px;font-weight:700;margin:0;"></p>
+                <p id="current-month-proposed-by" style="font-size:13px;color:var(--cyan);margin:4px 0 0;display:none;"></p>
+              </div>
+              <button class="mini-btn" id="admin-toggle-btn" style="display:none;">🔒 管理員模式</button>
+            </div>
+            <div id="admin-panel" style="display:none;"></div>
 
-        <!-- (1)(2) 主題候選投稿 + 列表 -->
-        <div style="background:var(--bg-panel-2);border:1px solid var(--line);border-radius:10px;padding:14px;margin-bottom:14px;">
-          <p style="font-size:13px;color:var(--text-mid);margin:0 0 8px;font-weight:500;">① 投稿本月主題候選　② 候選主題列表</p>
-          <div class="compose" style="margin-bottom:8px;">
-            <input id="theme-input" type="text" placeholder="投稿本月作業主題候選">
-            <button class="primary" id="theme-add">投稿</button>
-          </div>
-          <p class="err-msg" id="theme-err">請先輸入名字與內容</p>
-          <div id="theme-list"></div>
-        </div>
+            <!-- (4) 回報本月作業 -->
+            <div style="background:var(--bg-panel-2);border:1px solid var(--line);border-radius:10px;padding:14px;margin-bottom:14px;">
+              <p style="font-size:13px;color:var(--text-mid);margin:0 0 8px;font-weight:500;">④ 回報本月作業</p>
+              <div class="compose" style="margin-bottom:8px;">
+                <input id="homework-input" type="text" placeholder="分享你的作業成果或心得">
+                <button class="primary" id="homework-add">回報</button>
+              </div>
+              <div style="display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap;align-items:center;">
+                <input id="homework-link-input" type="text" placeholder="連結（選填，網址，例如作品連結或截圖雲端連結）" style="flex:1;min-width:180px;">
+              </div>
+              <p class="err-msg" id="homework-err">請先輸入名字與內容</p>
+            </div>
 
-        <!-- (4) 回報本月作業 -->
-        <div style="background:var(--bg-panel-2);border:1px solid var(--line);border-radius:10px;padding:14px;margin-bottom:14px;">
-          <p style="font-size:13px;color:var(--text-mid);margin:0 0 8px;font-weight:500;">④ 回報本月作業</p>
-          <div class="compose" style="margin-bottom:8px;">
-            <input id="homework-input" type="text" placeholder="分享你的作業成果或心得">
-            <button class="primary" id="homework-add">回報</button>
+            <!-- (5) 本月作業作品集 -->
+            <div style="background:var(--bg-panel-2);border:1px solid var(--line);border-radius:10px;padding:14px;">
+              <p style="font-size:13px;color:var(--text-mid);margin:0 0 8px;font-weight:500;">⑤ 本月作業作品集</p>
+              <div id="homework-list"></div>
+            </div>
           </div>
-          <div style="display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap;align-items:center;">
-            <input id="homework-link-input" type="text" placeholder="連結（選填，網址，例如作品連結或截圖雲端連結）" style="flex:1;min-width:180px;">
-          </div>
-          <p class="err-msg" id="homework-err">請先輸入名字與內容</p>
-        </div>
 
-        <!-- (5) 本月作業作品集 -->
-        <div style="background:var(--bg-panel-2);border:1px solid var(--line);border-radius:10px;padding:14px;">
-          <p style="font-size:13px;color:var(--text-mid);margin:0 0 8px;font-weight:500;">⑤ 本月作業作品集</p>
-          <div id="homework-list"></div>
+          <!-- (1)(2) 主題候選投稿 + 列表：移到側邊，取代動態牆的位置 -->
+          <div class="panel homework-side">
+            <p class="panel-title" style="font-size:15px;margin-bottom:10px;">📝 投稿本月主題候選</p>
+            <div class="compose" style="margin-bottom:8px;">
+              <input id="theme-input" type="text" placeholder="投稿本月作業主題候選">
+              <button class="primary" id="theme-add">投稿</button>
+            </div>
+            <p class="err-msg" id="theme-err">請先輸入名字與內容</p>
+            <div id="theme-list"></div>
+          </div>
         </div>
       </div>
 
@@ -872,6 +878,12 @@
       }
       case 'claimWish': {
         var rows = await sbRpc('claim_wish', { p_wish_id: payload.wishId, p_user_id: payload.userId, p_display_name: payload.displayName });
+        var claimRows = await sbSelect('wish_claims', 'claimed_at');
+        var claims = claimRows.filter(function(c){ return c.wish_id === payload.wishId; }).map(mapClaim);
+        return { wishId: rows[0].wish_id, claims: claims, status: rows[0].status };
+      }
+      case 'cancelClaim': {
+        var rows = await sbRpc('cancel_claim', { p_wish_id: payload.wishId, p_user_id: payload.userId });
         var claimRows = await sbSelect('wish_claims', 'claimed_at');
         var claims = claimRows.filter(function(c){ return c.wish_id === payload.wishId; }).map(mapClaim);
         return { wishId: rows[0].wish_id, claims: claims, status: rows[0].status };
@@ -1176,7 +1188,7 @@
       btn.classList.add('active');
       Object.keys(panels).forEach(function(k){ panels[k].style.display = 'none'; });
       panels[btn.dataset.tab].style.display = 'block';
-      if(btn.dataset.tab === 'showcase'){
+      if(btn.dataset.tab === 'showcase' || btn.dataset.tab === 'homework'){
         feedPanel.style.display = 'none';
         gridMain.style.gridTemplateColumns = '1fr';
       } else {
@@ -1203,7 +1215,9 @@
       var mine = claims.find(function(c){ return c.userId === myUid; });
       var iClaimed = !!mine;
       var iCompleted = mine && mine.completed;
-      var actions = !iClaimed ? '<button class="mini-btn" data-act="claim" data-id="'+w.wishId+'">認領</button>' : '';
+      var actions = !iClaimed
+        ? '<button class="mini-btn" data-act="claim" data-id="'+w.wishId+'">認領</button>'
+        : (!iCompleted ? '<button class="mini-btn" data-act="cancel-claim" data-id="'+w.wishId+'">取消認領</button>' : '');
       var claimerTags = claimCount > 0
         ? '<div class="claimer-tags">'+claims.map(function(c){ return '<span class="claimer-tag">'+esc(nameFor(c.userId, c.displayName))+(c.completed?' ✓':'')+'</span>'; }).join('')+'</div>'
         : '';
@@ -1226,6 +1240,19 @@
         btn.disabled = true;
         try{
           var result = await apiPost('claimWish', { wishId: btn.dataset.id, userId: currentUser.userId, displayName: currentUser.displayName });
+          var w = data.wishes.find(function(w){ return w.wishId === result.wishId; });
+          if(w){ w.claims = result.claims; w.status = result.status; }
+          renderAll();
+        }catch(e){ alert(e.message); btn.disabled = false; }
+      };
+    });
+    box.querySelectorAll('[data-act="cancel-claim"]').forEach(function(btn){
+      btn.onclick = async function(){
+        if(!currentUser) return;
+        if(!confirm('確定要取消認領這則許願嗎？')) return;
+        btn.disabled = true;
+        try{
+          var result = await apiPost('cancelClaim', { wishId: btn.dataset.id, userId: currentUser.userId });
           var w = data.wishes.find(function(w){ return w.wishId === result.wishId; });
           if(w){ w.claims = result.claims; w.status = result.status; }
           renderAll();
