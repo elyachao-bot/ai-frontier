@@ -1853,7 +1853,7 @@
       return;
     }
     tooltipBox.innerHTML = names.map(function(u){
-      return '<div class="member-tooltip-row"><b>'+esc(u.displayName)+'</b><span>'+stampsById(u.userId)+' 印章</span></div>';
+      return '<div class="member-tooltip-row"><b>'+esc(u.displayName)+'</b></div>';
     }).join('');
     listBox.innerHTML = '<div class="member-name-list">'+names.map(function(u){
       return '<span class="member-name-pill">'+esc(u.displayName)+'</span>';
