@@ -688,7 +688,8 @@
           <div class="stat-box"><div class="stat-label">進行中任務</div><div class="stat-val" id="myops-active">0</div></div>
           <div class="stat-box"><div class="stat-label">已完成任務</div><div class="stat-val" id="myops-done">0</div></div>
           <div class="stat-box"><div class="stat-label">我發起的許願</div><div class="stat-val" id="myops-authored">0</div></div>
-          <div class="stat-box"><div class="stat-label">累積印章</div><div class="stat-val" id="myops-stamps">0</div></div>
+          <div class="stat-box"><div class="stat-label">本季累積印章</div><div class="stat-val" id="myops-stamps-quarter">0</div></div>
+          <div class="stat-box"><div class="stat-label">總累積印章</div><div class="stat-val" id="myops-stamps">0</div></div>
         </div>
         <p class="section-label">進行中任務（已認領未完成）</p>
         <div id="myops-active-list"></div>
@@ -700,10 +701,10 @@
 
       <!-- BOARD -->
       <div id="panel-board" class="panel" style="display:none;">
-        <p class="panel-title">★ 印章排行榜</p>
-        <p class="panel-desc">完成許願分享、回報作業、分享案例，每次 +1 印章。</p>
+        <p class="panel-title">★ 本季排行榜</p>
+        <p class="panel-desc" id="board-quarter-label">完成許願分享、回報作業、分享案例，每次 +1 印章。</p>
         <div class="stat-row">
-          <div class="stat-box"><div class="stat-label">我的印章</div><div class="stat-val" id="my-stamps">0</div></div>
+          <div class="stat-box"><div class="stat-label">我的本季印章</div><div class="stat-val" id="my-stamps">0</div></div>
           <div class="stat-box"><div class="stat-label">參與人數</div><div class="stat-val" id="total-people">0</div></div>
         </div>
         <div id="leaderboard"></div>
@@ -734,7 +735,7 @@
   var currentUser = null;
   var registeredMembers = [];
   var nameById = {};
-  var data = { wishes: [], topicProposals: [], topics: [], currentTopic: null, homeworks: [], cases: [], showcase: [], stamps: [], likes: [] };
+  var data = { wishes: [], topicProposals: [], topics: [], currentTopic: null, homeworks: [], cases: [], showcase: [], stamps: [], likes: [], quarterlyLeaderboard: [], myQuarterlyStamps: 0 };
 
   // 小工具：包一層，把 Supabase 回傳的 {data, error} 轉成「成功回傳資料 / 失敗就 throw」，
   // 這樣呼叫端的寫法（try/catch 抓 e.message）跟原本 Apps Script 版本完全一樣，不用改。
@@ -1052,6 +1053,40 @@
   function thisMonthStr(){ return monthStr(new Date()); }
   function nextMonthStr(){ var d = new Date(); d.setMonth(d.getMonth()+1); return monthStr(d); }
 
+  // 依台北時間換算目前是第幾季，不受使用者裝置系統時區影響
+  var TW_QUARTER_FORMATTER = new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Taipei', year: 'numeric', month: 'numeric' });
+  function currentQuarter(){
+    var parts = {};
+    TW_QUARTER_FORMATTER.formatToParts(new Date()).forEach(function(p){ parts[p.type] = p.value; });
+    var year = Number(parts.year);
+    var month = Number(parts.month);
+    var quarter = Math.floor((month - 1) / 3) + 1;
+    return { year: year, quarter: quarter };
+  }
+
+  async function refreshQuarterlyBoard(){
+    var q = currentQuarter();
+    try{
+      var top = await sbRpc('get_quarterly_leaderboard', { p_year: q.year, p_quarter: q.quarter, p_limit: 5 });
+      data.quarterlyLeaderboard = top || [];
+    }catch(e){
+      console.error('讀取本季排行榜失敗', e);
+      data.quarterlyLeaderboard = [];
+    }
+    if(currentUser){
+      try{
+        var mineRes = await sb.rpc('get_my_quarterly_stamps', { p_user_id: currentUser.userId, p_year: q.year, p_quarter: q.quarter });
+        if(mineRes.error) throw new Error(mineRes.error.message);
+        data.myQuarterlyStamps = Number(mineRes.data) || 0;
+      }catch(e){
+        console.error('讀取本季個人印章失敗', e);
+        data.myQuarterlyStamps = 0;
+      }
+    }
+    renderBoard();
+    renderMyOps();
+  }
+
   function getName(){ return currentUser ? currentUser.displayName : null; }
   // 名稱一律以帳號 ID 反查目前最新的顯示名稱，改名字後所有地方會自動同步
   function nameFor(userId, fallback){ return nameById[userId] || fallback || ''; }
@@ -1105,6 +1140,7 @@
     }catch(e){
       console.error('讀取資料失敗', e);
     }
+    await refreshQuarterlyBoard();
   }
 
   function renderAll(){
@@ -1455,6 +1491,7 @@
       document.getElementById('myops-done').textContent = 0;
       document.getElementById('myops-authored').textContent = 0;
       document.getElementById('myops-stamps').textContent = 0;
+      document.getElementById('myops-stamps-quarter').textContent = 0;
       return;
     }
     var myUid = currentUser.userId;
@@ -1473,6 +1510,7 @@
     document.getElementById('myops-done').textContent = myDoneCount;
     document.getElementById('myops-authored').textContent = myAuthored.length;
     document.getElementById('myops-stamps').textContent = stampsById(myUid);
+    document.getElementById('myops-stamps-quarter').textContent = data.myQuarterlyStamps;
 
     activeBox.innerHTML = myActive.length === 0
       ? '<p class="empty">目前沒有進行中的任務，去許願樓認領一個吧。</p>'
@@ -1505,17 +1543,22 @@
 
   /* ---------- 印章排行 ---------- */
   function renderBoard(){
-    var entries = data.stamps.map(function(s){ return [nameFor(s.userId, s.displayName), Number(s.totalStamps)||0]; }).sort(function(a,b){ return b[1]-a[1]; });
     document.getElementById('total-people').textContent = registeredMembers.length;
-    document.getElementById('my-stamps').textContent = currentUser ? stampsById(currentUser.userId) : 0;
+    document.getElementById('my-stamps').textContent = currentUser ? data.myQuarterlyStamps : 0;
     document.getElementById('my-stamps-chip').textContent = currentUser ? stampsById(currentUser.userId) : 0;
     document.getElementById('total-people-chip').textContent = registeredMembers.length;
     document.getElementById('total-posts-chip').textContent = data.wishes.length + data.topicProposals.length + data.homeworks.length + data.cases.length + data.showcase.length;
+
+    var q = currentQuarter();
+    var labelEl = document.getElementById('board-quarter-label');
+    if(labelEl) labelEl.textContent = '完成許願分享、回報作業、分享案例，每次 +1 印章。目前顯示 ' + q.year + ' Q' + q.quarter + ' 排行榜。';
+
     var box = document.getElementById('leaderboard');
-    if(entries.length === 0){ box.innerHTML = '<p class="empty">還沒有印章紀錄。</p>'; return; }
-    box.innerHTML = entries.slice(0,5).map(function(e,i){
+    var entries = data.quarterlyLeaderboard || [];
+    if(entries.length === 0){ box.innerHTML = '<p class="empty">本季還沒有印章紀錄。</p>'; return; }
+    box.innerHTML = entries.map(function(e,i){
       var cls = i===0?'top1':(i===1?'top2':(i===2?'top3':''));
-      return '<div class="rank-row '+cls+'"><div class="rank-num">'+(i+1)+'</div><div class="rank-name">'+esc(e[0])+'</div><div class="rank-xp">'+e[1]+' 印章</div></div>';
+      return '<div class="rank-row '+cls+'"><div class="rank-num">'+(i+1)+'</div><div class="rank-name">'+esc(e.display_name)+'</div><div class="rank-xp">'+e.total_stamps+' 印章</div></div>';
     }).join('');
   }
 
