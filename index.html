@@ -2082,6 +2082,22 @@
     document.getElementById('auth-screen').style.display = 'block';
     document.getElementById('app-screen').style.display = 'none';
   }
+  var autoRefreshTimer = null;
+  function startAutoRefresh(){
+    if(autoRefreshTimer) return;
+    autoRefreshTimer = setInterval(function(){
+      // 使用者正在輸入框打字，或正在就地編輯自己的內容時，先跳過這次自動刷新，
+      // 避免打到一半被蓋掉；下一次（30 秒後）再重試
+      var active = document.activeElement;
+      if(active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) return;
+      if(editingItem) return;
+      refreshData();
+    }, 30000);
+  }
+  function stopAutoRefresh(){
+    if(autoRefreshTimer){ clearInterval(autoRefreshTimer); autoRefreshTimer = null; }
+  }
+
   function showAppScreen(){
     document.getElementById('auth-screen').style.display = 'none';
     document.getElementById('app-screen').style.display = 'block';
@@ -2091,8 +2107,9 @@
     hydrateAvatar();
     refreshData();
     refreshLineBindStatus();
-    // 註：個人操作已經是樂觀更新不用等 refreshData；曾經加過背景輪詢自動同步別人新貼的內容，
-    // 但為了先求穩定、減少對後端的額外負擔先拿掉了，之後想看到別人的新內容手動重整頁面即可
+    // 個人操作本身已經是樂觀更新，不用等自動刷新；這裡另外每 30 秒自動重打一次資料，
+    // 讓其他人新增的內容不用手動整頁重新整理也能看到
+    startAutoRefresh();
   }
 
   document.querySelectorAll('.auth-tab-btn').forEach(function(btn){
@@ -2174,6 +2191,7 @@
   };
 
   document.getElementById('logout-btn').onclick = function(){
+    stopAutoRefresh();
     currentUser = null;
     clearSession();
     showAuthScreen();
