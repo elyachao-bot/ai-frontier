@@ -820,7 +820,7 @@
       wishes: wishes,
       topicProposals: proposalRows.map(mapTopicProposal),
       topics: topics,
-      currentTopic: topics.length ? topics[topics.length - 1] : null,
+      currentTopic: computeCurrentTopic_(topics),
       homeworks: homeworkRows.map(mapHomework),
       cases: caseRows.map(mapCase),
       showcase: showcaseRows.map(mapShowcase),
@@ -1281,6 +1281,15 @@
   function thisMonthStr(){ return monthStr(new Date()); }
   function nextMonthStr(){ var d = new Date(); d.setMonth(d.getMonth()+1); return monthStr(d); }
 
+  // 從一批 topics 裡挑出「月份已經到了」的最新一筆，跟 apiGet() 裡的判斷邏輯一致，
+  // 前端任何地方要更新 data.currentTopic，都要透過這支，不能直接塞 result 進去，
+  // 不然會出現「提前設定的下個月主題按下去馬上變成本月主題」的問題
+  function computeCurrentTopic_(topics){
+    var todayMonthStr = thisMonthStr();
+    var eligible = topics.filter(function(t){ return t.month <= todayMonthStr; });
+    return eligible.length ? eligible[eligible.length - 1] : null;
+  }
+
   // 依台北時間換算目前是第幾季，不受使用者裝置系統時區影響
   var TW_QUARTER_FORMATTER = new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Taipei', year: 'numeric', month: 'numeric' });
   function currentQuarter(){
@@ -1524,8 +1533,8 @@
           this.disabled = true;
           try{
             var result = await apiPost('selectTopicProposal', { proposalId: id, userId: currentUser.userId });
-            data.topics.push(result);
-            data.currentTopic = result;
+            upsertTopicRow_(result);
+            data.currentTopic = computeCurrentTopic_(data.topics);
             var p = data.topicProposals.find(function(p){ return String(p.id) === String(id); });
             if(p) p.selected = true;
             renderAll();
@@ -1587,18 +1596,28 @@
     renderAdminPanel();
   }
 
+  // 把一筆 topic 結果存進 data.topics：同月份已存在就覆蓋更新，不存在才新增，
+  // 因為後端 set_topic/select_topic_proposal 現在是「同月份只保留一筆」的 upsert 邏輯
+  function upsertTopicRow_(result){
+    var idx = data.topics.findIndex(function(t){ return t.month === result.month; });
+    if(idx >= 0) data.topics[idx] = result; else data.topics.push(result);
+  }
+
   function renderAdminPanel(){
     var box = document.getElementById('admin-panel');
     if(box.style.display === 'none') return;
-    var suggestMonth = data.currentTopic ? data.currentTopic.month : thisMonthStr();
+    // 預設帶出「下個月」，方便提前規劃；如果下個月已經設定過主題，直接把內容帶出來讓你改，不用重打
+    var suggestMonth = nextMonthStr();
+    var existing = data.topics.find(function(t){ return t.month === suggestMonth; });
     box.innerHTML = '<div class="admin-box">'
       + '<p style="font-size:12px;color:var(--cyan);margin:0 0 10px;font-weight:600;">🔓 管理員模式</p>'
+      + '<p class="admin-note" style="margin:0 0 10px;">預設帶出下個月，設定後在那個月真正到來之前都可以隨時回來調整。</p>'
       + '<div class="admin-row">'
       + '<input type="text" id="admin-month-input" placeholder="月份（格式 yyyy-mm-01）" value="'+esc(suggestMonth)+'" style="max-width:180px;">'
-      + '<input type="text" id="admin-topic-input" placeholder="設定該月作業主題">'
+      + '<input type="text" id="admin-topic-input" placeholder="設定該月作業主題" value="'+escAttr(existing ? existing.topic : '')+'">'
       + '</div>'
-      + '<button class="mini-btn primary-mini" id="admin-set-topic-btn">公告主題</button>'
-      + '<p class="admin-note">公告新主題後，「回報本月作業」會自動歸到這個月份；先前月份的作業會自動出現在作品展示區。</p>'
+      + '<button class="mini-btn primary-mini" id="admin-set-topic-btn">'+(existing ? '更新主題' : '公告主題')+'</button>'
+      + '<p class="admin-note">同一個月份重複設定會直接覆蓋更新，不會疊加成好幾筆；「回報本月作業」只會歸到「目前」（月份已到）的主題，先前月份的作業會自動出現在作品展示區。</p>'
       + '</div>';
     document.getElementById('admin-set-topic-btn').onclick = async function(){
       var month = document.getElementById('admin-month-input').value.trim();
@@ -1607,8 +1626,8 @@
       this.disabled = true;
       try{
         var result = await apiPost('setTopic', { userId: currentUser.userId, month: month, topic: topic, selectionMethod: '管理員決選' });
-        data.topics.push(result);
-        data.currentTopic = result;
+        upsertTopicRow_(result);
+        data.currentTopic = computeCurrentTopic_(data.topics);
         renderAll();
       }catch(e){ alert(e.message); }
       this.disabled = false;
