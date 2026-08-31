@@ -908,7 +908,7 @@
         return { month: r.month, topic: r.topic, selectionMethod: payload.selectionMethod || '管理員決選', timestamp: new Date().toISOString(), proposedByUserId: '', proposedByDisplayName: '' };
       }
       case 'selectTopicProposal': {
-        var rows = await sbRpc('select_topic_proposal', { p_proposal_id: payload.proposalId, p_admin_user_id: payload.userId });
+        var rows = await sbRpc('select_topic_proposal', { p_proposal_id: payload.proposalId, p_admin_user_id: payload.userId, p_month: payload.month });
         var r = rows[0];
         return { month: r.month, topic: r.topic, selectionMethod: r.selection_method, timestamp: r.created_at, proposedByUserId: r.proposed_by_user_id || '', proposedByDisplayName: r.proposed_by_display_name || '' };
       }
@@ -1518,10 +1518,12 @@
     box.innerHTML = sortedArr.map(function(t){
       var selectedBadge = t.selected ? ' <span style="color:var(--cyan);font-size:12px;">💡 已雀屏中選</span>' : '';
       var adminBtns = adminMode
-        ? '<div style="display:flex;gap:6px;margin-top:8px;">'
+        ? '<div style="margin-top:8px;">'
+          + '<p style="font-size:11px;color:var(--text-dim);margin:0 0 6px;">將套用到：' + esc(monthLabel_(adminSelectedMonth || thisMonthStr())) + '</p>'
+          + '<div style="display:flex;gap:6px;">'
           + '<button class="mini-btn primary-mini" data-select-proposal="'+t.id+'">選這個</button>'
           + '<button class="mini-btn danger-btn" data-delete-proposal="'+t.id+'">刪除</button>'
-          + '</div>'
+          + '</div></div>'
         : '';
       return '<div class="quest-card tone-cyan"><div class="quest-body">'+esc(t.proposedTopic)+selectedBadge+'</div><div class="quest-meta"><span class="author">'+esc(nameFor(t.userId, t.displayName))+'</span><span>'+fmtTime(t.timestamp)+'</span></div>'+adminBtns+'</div>';
     }).join('');
@@ -1532,7 +1534,7 @@
           var id = this.getAttribute('data-select-proposal');
           this.disabled = true;
           try{
-            var result = await apiPost('selectTopicProposal', { proposalId: id, userId: currentUser.userId });
+            var result = await apiPost('selectTopicProposal', { proposalId: id, userId: currentUser.userId, month: adminSelectedMonth });
             upsertTopicRow_(result);
             data.currentTopic = computeCurrentTopic_(data.topics);
             var p = data.topicProposals.find(function(p){ return String(p.id) === String(id); });
@@ -1603,29 +1605,67 @@
     if(idx >= 0) data.topics[idx] = result; else data.topics.push(result);
   }
 
+  // 未來 6 個月的月份清單（含目前這個月），會隨著時間自動往前捲動：
+  // 這個月過完，下個月就會自動變成清單第一個，最後面自動多出一個新的月份，永遠維持 6 筆
+  function adminMonthOptions_(){
+    var base = thisMonthStr().split('-');
+    var y = Number(base[0]), m = Number(base[1]);
+    var months = [];
+    for(var i = 0; i < 6; i++){
+      var mm = m + i;
+      var yy = y + Math.floor((mm - 1) / 12);
+      var realM = ((mm - 1) % 12) + 1;
+      months.push(yy + '-' + pad2(realM) + '-01');
+    }
+    return months;
+  }
+  function monthLabel_(m){
+    var parts = m.split('-');
+    return parts[0] + '年' + Number(parts[1]) + '月';
+  }
+
+  // 記住管理員面板目前選到哪個月，避免每次 renderAll() 都被重置回預設值，
+  // 也讓「選這個」候選主題按鈕知道要套用到哪個月
+  var adminSelectedMonth = null;
+
   function renderAdminPanel(){
     var box = document.getElementById('admin-panel');
     if(box.style.display === 'none') return;
-    // 預設帶出「下個月」，方便提前規劃；如果下個月已經設定過主題，直接把內容帶出來讓你改，不用重打
-    var suggestMonth = nextMonthStr();
-    var existing = data.topics.find(function(t){ return t.month === suggestMonth; });
+    var months = adminMonthOptions_();
+    if(!adminSelectedMonth || months.indexOf(adminSelectedMonth) === -1) adminSelectedMonth = months[0];
+    var existing = data.topics.find(function(t){ return t.month === adminSelectedMonth; });
+
+    var optionsHtml = months.map(function(m){
+      var t = data.topics.find(function(t){ return t.month === m; });
+      var label = monthLabel_(m) + (t ? '（已設定：' + t.topic + '）' : '（尚未設定）');
+      return '<option value="' + m + '"' + (m === adminSelectedMonth ? ' selected' : '') + '>' + esc(label) + '</option>';
+    }).join('');
+
     box.innerHTML = '<div class="admin-box">'
       + '<p style="font-size:12px;color:var(--cyan);margin:0 0 10px;font-weight:600;">🔓 管理員模式</p>'
-      + '<p class="admin-note" style="margin:0 0 10px;">預設帶出下個月，設定後在那個月真正到來之前都可以隨時回來調整。</p>'
+      + '<p class="admin-note" style="margin:0 0 10px;">選擇要設定／查看的月份，最多可以預先規劃未來 6 個月；右側候選主題按「選這個」會套用到這裡選的月份。</p>'
       + '<div class="admin-row">'
-      + '<input type="text" id="admin-month-input" placeholder="月份（格式 yyyy-mm-01）" value="'+esc(suggestMonth)+'" style="max-width:180px;">'
-      + '<input type="text" id="admin-topic-input" placeholder="設定該月作業主題" value="'+escAttr(existing ? existing.topic : '')+'">'
+      + '<select id="admin-month-select" style="max-width:280px;">' + optionsHtml + '</select>'
       + '</div>'
-      + '<button class="mini-btn primary-mini" id="admin-set-topic-btn">'+(existing ? '更新主題' : '公告主題')+'</button>'
+      + '<div class="admin-row">'
+      + '<input type="text" id="admin-topic-input" placeholder="設定該月作業主題" value="' + escAttr(existing ? existing.topic : '') + '">'
+      + '</div>'
+      + '<button class="mini-btn primary-mini" id="admin-set-topic-btn">' + (existing ? '更新主題' : '公告主題') + '</button>'
       + '<p class="admin-note">同一個月份重複設定會直接覆蓋更新，不會疊加成好幾筆；「回報本月作業」只會歸到「目前」（月份已到）的主題，先前月份的作業會自動出現在作品展示區。</p>'
       + '</div>';
+
+    document.getElementById('admin-month-select').onchange = function(){
+      adminSelectedMonth = this.value;
+      renderAdminPanel();
+      renderThemes();
+    };
+
     document.getElementById('admin-set-topic-btn').onclick = async function(){
-      var month = document.getElementById('admin-month-input').value.trim();
       var topic = document.getElementById('admin-topic-input').value.trim();
-      if(!month || !topic){ alert('月份與主題都要填喔'); return; }
+      if(!topic){ alert('請輸入主題內容'); return; }
       this.disabled = true;
       try{
-        var result = await apiPost('setTopic', { userId: currentUser.userId, month: month, topic: topic, selectionMethod: '管理員決選' });
+        var result = await apiPost('setTopic', { userId: currentUser.userId, month: adminSelectedMonth, topic: topic, selectionMethod: '管理員決選' });
         upsertTopicRow_(result);
         data.currentTopic = computeCurrentTopic_(data.topics);
         renderAll();
